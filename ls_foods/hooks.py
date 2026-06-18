@@ -8,7 +8,32 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["frappe", "erpnext", "hrms"]
+
+# Fixtures
+# ------------------
+# Ship the household-payroll custom fields with the app (module = "Ls Foods").
+fixtures = [
+	{"dt": "Custom Field", "filters": [["module", "=", "Ls Foods"]]},
+]
+
+# Document Events
+# ------------------
+# Fill Salary Slip.custom_ytd_gross_pay before validation so the US household
+# tax formulas can apply YTD thresholds / wage-base caps. Replaces the legacy
+# "Salary Slip - Set YTD Gross Pay" Server Script.
+doc_events = {
+	"Salary Slip": {
+		"before_validate": "ls_foods.payroll.set_ytd_gross_pay",
+	},
+}
+
+# Installation
+# ------------------
+# Set up the company-wide payroll engine: custom fields, salary components, the
+# Household salary structure, and disable the legacy server script. Idempotent;
+# also runs on migrate via patches.txt. Does NOT seed any specific employee.
+after_install = "ls_foods.setup.payroll_setup.run"
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
