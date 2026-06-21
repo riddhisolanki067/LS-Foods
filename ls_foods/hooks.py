@@ -28,9 +28,8 @@ fixtures = [
 #   nothing hardcoded. Auto-skipped when a Payroll Entry drives the submit.
 doc_events = {
 	"Salary Slip": {
-		"before_validate": "ls_foods.payroll.set_ytd_gross_pay",
-		"on_submit": "ls_foods.payroll.post_accrual_journal_entry",
-		"on_cancel": "ls_foods.payroll.reverse_accrual_journal_entry",
+		"validate": "ls_foods.setup.payment_entry.set_net_pay_in_words",
+		
 	},
 }
 
@@ -74,7 +73,7 @@ after_install = "ls_foods.setup.payroll_setup.run"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {"Salary Slip" : "public/js/payment_entry.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
