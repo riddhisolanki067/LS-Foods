@@ -9,22 +9,24 @@
 
 frappe.ui.form.on('Salary Slip', {
     refresh: function (frm) {
+        console.log('Salary Slip refresh triggered for: ' + frm.doc.name);
         // Only show on submitted slips
         if (frm.doc.docstatus !== 1) return;
-
+        console.log('Checking if payment entry exists for Salary Slip: ' + frm.doc.name);
         // Avoid duplicate payments — check if a JE already exists for this slip
         frappe.call({
             method: 'frappe.client.get_count',
             args: {
-                doctype: 'Journal Entry Account',
+                doctype: 'Salary Slip',
                 filters: {
-                    reference_type: 'Salary Slip',
-                    reference_name: frm.doc.name,
-                    docstatus: ['!=', 2]
+                    journal_entry: ['is', 'set'],
+                    name: frm.doc.name,
+                   
                 }
             },
             callback: function (r) {
-                if (!r.message) {
+                if (r.message) {
+                    console.log('Payment entry can be made');
                     frm.add_custom_button(__('Make Payment Entry'), function () {
                         show_payment_dialog(frm);
                     }, __('Payment'));
