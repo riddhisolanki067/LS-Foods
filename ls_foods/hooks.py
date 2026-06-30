@@ -29,7 +29,8 @@ fixtures = [
 doc_events = {
 	"Salary Slip": {
 		"validate": "ls_foods.setup.payment_entry.set_net_pay_in_words",
-		
+		"on_submit": "ls_foods.payroll.post_accrual_journal_entry",
+		"on_cancel": "ls_foods.payroll.reverse_accrual_journal_entry",
 	},
 }
 
