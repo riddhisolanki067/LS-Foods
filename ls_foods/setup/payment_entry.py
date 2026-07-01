@@ -112,7 +112,13 @@ def create_salary_payment_entry(salary_slip, payment_account):
     return je.name
 
 def set_net_pay_in_words(doc, method):
-    doc.custom_total_in_words = frappe.utils.money_in_words(doc.net_pay, doc.currency)
+    words = frappe.utils.money_in_words(doc.net_pay, doc.currency)
+    # Remove only the capitalized "And" used within the number itself,
+    # but keep the lowercase "and" that joins whole and decimal parts
+    words = re.sub(r'\bAnd\b', '', words)
+    # collapse any double spaces left behind
+    words = re.sub(r'\s+', ' ', words).strip()
+    doc.custom_total_in_words = words
 
 # -------------------------------------------------------------------------
 # NOTE if using "Server Script" (Option A) instead of a custom app:
