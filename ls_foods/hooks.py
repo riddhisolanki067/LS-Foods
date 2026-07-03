@@ -21,14 +21,22 @@ fixtures = [
 # ------------------
 # before_validate: fill Salary Slip.custom_ytd_gross_pay so the US household tax
 #   formulas can apply YTD thresholds / wage-base caps (replaces the legacy
-#   "Salary Slip - Set YTD Gross Pay" Server Script).
+#   "Salary Slip - Set YTD Gross Pay" Server Script). MUST run here so the value
+#   is present before the salary-component formulas are evaluated.
+# validate: (1) net pay in words, (2) fill custom_mtd_gross_pay — month-to-date
+#   gross grouped by posting_date, incl. the current slip (needs gross_pay, which
+#   is computed during the standard validate, so it runs on validate not before).
 # on_submit / on_cancel: post / reverse the payroll accrual Journal Entry directly
 #   from a standalone Salary Slip, so one slip a week is all that's needed (no
 #   Payroll Entry). Fully dynamic — accounts come from the component mappings,
 #   nothing hardcoded. Auto-skipped when a Payroll Entry drives the submit.
 doc_events = {
 	"Salary Slip": {
-		"validate": "ls_foods.setup.payment_entry.set_net_pay_in_words",
+		"before_validate": "ls_foods.payroll.set_ytd_gross_pay",
+		"validate": [
+			"ls_foods.setup.payment_entry.set_net_pay_in_words",
+			"ls_foods.payroll.set_mtd_gross_pay",
+		],
 		"on_submit": "ls_foods.payroll.post_accrual_journal_entry",
 		"on_cancel": "ls_foods.payroll.reverse_accrual_journal_entry",
 	},

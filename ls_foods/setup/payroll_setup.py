@@ -127,6 +127,17 @@ CUSTOM_FIELDS = {
 			"submitted slips this calendar year. Do not edit.",
 			"module": MODULE,
 		},
+		{
+			"fieldname": "custom_mtd_gross_pay",
+			"label": "MTD Gross Pay (this month)",
+			"fieldtype": "Currency",
+			"insert_after": "custom_ytd_gross_pay",
+			"read_only": 1,
+			"description": "Auto-filled by the ls_foods validate hook: month-to-date "
+			"gross pay grouped by posting date (prior submitted slips this month + "
+			"this slip). Do not edit.",
+			"module": MODULE,
+		},
 	],
 }
 

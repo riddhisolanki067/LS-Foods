@@ -49,6 +49,45 @@ def set_ytd_gross_pay(doc, method=None):
 	doc.custom_ytd_gross_pay = ytd
 
 
+def set_mtd_gross_pay(doc, method=None):
+	"""Validate on Salary Slip.
+
+	Fill ``custom_mtd_gross_pay`` with the employee's **month-to-date** gross pay,
+	grouped by the slip's ``posting_date`` (NOT the pay-period start/end). This is
+	a true MTD figure: the sum of ``gross_pay`` from prior **submitted** slips
+	whose posting_date falls in the same calendar month, PLUS this slip's own
+	gross_pay. So when two separate slips are posted in the same month, the later
+	slip shows the running month total.
+
+	Runs on ``validate`` (not before_validate) because ``gross_pay`` is only
+	computed during the standard Salary Slip validate, and we need it to include
+	the current slip.
+
+	To make this behave like ``custom_ytd_gross_pay`` instead (prior periods only,
+	excluding the current slip), drop the ``+ flt(doc.gross_pay)`` below and wire
+	it under ``before_validate`` in hooks.py.
+	"""
+	mtd = 0
+	if doc.employee and doc.posting_date:
+		pdate = frappe.utils.getdate(doc.posting_date)
+		month_start = pdate.replace(day=1)
+		next_month = frappe.utils.add_months(month_start, 1)  # first day of next month
+		rows = frappe.get_all(
+			"Salary Slip",
+			filters=[
+				["employee", "=", doc.employee],
+				["docstatus", "=", 1],
+				["posting_date", ">=", month_start],
+				["posting_date", "<", next_month],
+				["name", "!=", doc.name or ""],
+			],
+			fields=["sum(gross_pay) as total"],
+		)
+		if rows and rows[0].get("total"):
+			mtd = flt(rows[0].get("total"))
+	doc.custom_mtd_gross_pay = flt(mtd) + flt(doc.gross_pay)
+
+
 # ===================================================================
 #  Accrual Journal Entry on standalone Salary Slip submit/cancel
 # ===================================================================

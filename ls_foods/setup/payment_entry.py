@@ -12,6 +12,8 @@
 #       "your_app.api.create_salary_payment_entry"
 # =========================================================================
 
+import re
+
 import frappe
 from frappe import _
 from frappe.utils import nowdate, flt
@@ -111,8 +113,8 @@ def create_salary_payment_entry(salary_slip, payment_account):
 
     return je.name
 
-def set_net_pay_in_words(doc, method):
-    words = frappe.utils.money_in_words(doc.net_pay, doc.currency)
+def set_net_pay_in_words(doc, method=None):
+    words = frappe.utils.money_in_words(flt(doc.net_pay), doc.currency)
     # Remove only the capitalized "And" used within the number itself,
     # but keep the lowercase "and" that joins whole and decimal parts
     words = re.sub(r'\bAnd\b', '', words)
