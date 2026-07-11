@@ -15,6 +15,7 @@ required_apps = ["frappe", "erpnext", "hrms"]
 # Ship the household-payroll custom fields with the app (module = "Ls Foods").
 fixtures = [
 	{"dt": "Custom Field", "filters": [["module", "=", "Ls Foods"]]},
+	{"dt": "Print Format", "filters": [["module", "=", "Ls Foods"]]},
 ]
 
 # Document Events
