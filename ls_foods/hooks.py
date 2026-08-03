@@ -27,10 +27,20 @@ fixtures = [
 # validate: (1) net pay in words, (2) fill custom_mtd_gross_pay — month-to-date
 #   gross grouped by posting_date, incl. the current slip (needs gross_pay, which
 #   is computed during the standard validate, so it runs on validate not before).
+# before_submit: refuse to submit a slip with no Hours Worked — the Hourly Wage
+#   formula is custom_hours_worked * custom_rate_per_hour, so a blank value
+#   silently produces a $0 slip. The form warns on save too (payment_entry.js).
 # on_submit / on_cancel: post / reverse the payroll accrual Journal Entry directly
 #   from a standalone Salary Slip, so one slip a week is all that's needed (no
 #   Payroll Entry). Fully dynamic — accounts come from the component mappings,
 #   nothing hardcoded. Auto-skipped when a Payroll Entry drives the submit.
+#
+# Expense Claim = the Employee Reimbursement module (mileage, expenses, and
+#   stock/supplies purchases that increase inventory). See ls_foods/reimbursement.py
+#   and setup/reimbursement_setup.py for the design rationale and the double entry.
+# before_validate: compute mileage amounts and mirror the Purchased Items table
+#   into the standard Expenses table, so the claim total / GL / payable include it.
+# on_submit / on_cancel: post / cancel the Material Receipt Stock Entry.
 doc_events = {
 	"Salary Slip": {
 		"before_validate": "ls_foods.payroll.set_ytd_gross_pay",
@@ -38,8 +48,14 @@ doc_events = {
 			"ls_foods.setup.payment_entry.set_net_pay_in_words",
 			"ls_foods.payroll.set_mtd_gross_pay",
 		],
+		"before_submit": "ls_foods.setup.payment_entry.validate_hours_worked",
 		"on_submit": "ls_foods.payroll.post_accrual_journal_entry",
 		"on_cancel": "ls_foods.payroll.reverse_accrual_journal_entry",
+	},
+	"Expense Claim": {
+		"before_validate": "ls_foods.reimbursement.sync_reimbursement_rows",
+		"on_submit": "ls_foods.reimbursement.post_stock_entry",
+		"on_cancel": "ls_foods.reimbursement.cancel_stock_entry",
 	},
 }
 
@@ -48,7 +64,11 @@ doc_events = {
 # Set up the company-wide payroll engine: custom fields, salary components, the
 # Household salary structure, and disable the legacy server script. Idempotent;
 # also runs on migrate via patches.txt. Does NOT seed any specific employee.
-after_install = "ls_foods.setup.payroll_setup.run"
+after_install = [
+	"ls_foods.setup.payroll_setup.run",
+	"ls_foods.setup.hr_settings.run",
+	"ls_foods.setup.reimbursement_setup.run",
+]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -83,7 +103,10 @@ after_install = "ls_foods.setup.payroll_setup.run"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Salary Slip" : "public/js/payment_entry.js"}
+doctype_js = {
+	"Salary Slip": "public/js/payment_entry.js",
+	"Expense Claim": "public/js/expense_claim.js",
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}

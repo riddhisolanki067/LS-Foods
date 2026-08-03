@@ -1,32 +1,38 @@
 # =========================================================================
-# SERVER METHOD — creates the Journal Entry for a Salary Slip payment
+# LS Foods — Salary Slip payment Journal Entry + Hours Worked guard.
 #
-# Where to put this:
-#   Option A (no custom app): Setup > Customization > Server Script
-#       -> New, Script Type = "API", Method = e.g. "create_salary_payment_entry"
-#       -> paste the BODY of the function (Server Script runs as a snippet,
-#          not a def, so adapt accordingly — see note at bottom of file).
-#   Option B (custom app, recommended): put this whole file at
-#       <your_app>/<your_app>/api.py  (or any module you like)
-#       and update the client script's `method:` path to match, e.g.
-#       "your_app.api.create_salary_payment_entry"
+# Wired in hooks.py:
+#   doc_events["Salary Slip"]["validate"]  -> set_net_pay_in_words
+#   doc_events["Salary Slip"]["before_submit"] -> validate_hours_worked
+#   doctype_js["Salary Slip"] -> public/js/payment_entry.js  (calls the
+#       whitelisted create_salary_payment_entry / update_payment_date below)
 # =========================================================================
 
 import re
 
 import frappe
 from frappe import _
-from frappe.utils import nowdate, flt
+from frappe.utils import cint, flt, getdate, nowdate
 
 
 @frappe.whitelist()
-def create_salary_payment_entry(salary_slip, payment_account):
+def create_salary_payment_entry(salary_slip, payment_account, payment_date=None, submit_je=1):
     """
-    Create a submitted-ready Journal Entry that pays out a Salary Slip's
-    net pay from the selected `payment_account`.
+    Create the Journal Entry that pays out a Salary Slip's net pay from the
+    selected `payment_account`.
 
     Debit  -> Payroll Payable Account (clears the liability), party = Employee
     Credit -> payment_account (the bank/cash account selected by the user)
+
+    `payment_date` becomes the JE's posting date — i.e. the date the employee was
+    actually paid, which is what lands in the bank reconciliation and the GL.
+    It used to be hardcoded to today, so a slip entered late was posted on the
+    wrong day. Defaults to today when not supplied.
+
+    `submit_je=0` leaves the Journal Entry as a DRAFT. That is the supported way
+    to correct a payment date after the fact: a submitted JE's posting date is
+    locked by ERPNext (changing it would silently move a posted GL entry between
+    periods), so an already-submitted payment must be cancelled and amended.
     """
 
     if not payment_account:
@@ -38,16 +44,16 @@ def create_salary_payment_entry(salary_slip, payment_account):
         frappe.throw(_("Salary Slip must be submitted before making a payment entry"))
 
     # --- Prevent duplicate payment entries for the same slip -------------
-    existing = frappe.db.exists(
-        "Journal Entry Account",
-        {
-            "reference_type": "Salary Slip",
-            "reference_name": ss.name,
-            "docstatus": ["!=", 2],
-        },
-    )
-    if existing:
-        frappe.throw(_("A Journal Entry already exists for Salary Slip {0}").format(ss.name))
+    # NOTE: the slip's standard `journal_entry` field holds the ACCRUAL entry
+    # posted by ls_foods.payroll, not the payment. The payment JE is tracked
+    # separately on custom_payment_journal_entry.
+    existing = ss.get("custom_payment_journal_entry")
+    if existing and frappe.db.get_value("Journal Entry", existing, "docstatus") != 2:
+        frappe.throw(
+            _("Payment Journal Entry {0} already exists for Salary Slip {1}. Cancel it first.").format(
+                frappe.utils.get_link_to_form("Journal Entry", existing), ss.name
+            )
+        )
 
     # --- Resolve the Payroll Payable account dynamically ------------------
     payroll_payable_account = ss.get("payroll_payable_account") or frappe.get_cached_value(
@@ -65,14 +71,27 @@ def create_salary_payment_entry(salary_slip, payment_account):
     if not flt(ss.net_pay):
         frappe.throw(_("Net Pay on Salary Slip {0} is zero").format(ss.name))
 
+    payment_date = getdate(payment_date or nowdate())
+
+    # Paying before the period the slip covers is almost always a typo.
+    if ss.end_date and payment_date < getdate(ss.start_date):
+        frappe.throw(
+            _("Payment Date {0} is before the pay period starts ({1}).").format(
+                frappe.format(payment_date, "Date"), frappe.format(ss.start_date, "Date")
+            )
+        )
+
     # --- Build the Journal Entry, fully dynamic on company/currency -------
     company_currency = frappe.get_cached_value("Company", ss.company, "default_currency")
 
     je = frappe.new_doc("Journal Entry")
     je.voucher_type = "Journal Entry"
     je.company = ss.company
-    je.posting_date = nowdate()
+    je.posting_date = payment_date
     je.multi_currency = 0
+    # NOTE: deliberately NOT setting cheque_date — ERPNext makes Reference No
+    # mandatory the moment a Reference Date is present, which would block the
+    # submit for anyone paying by transfer rather than cheque.
     je.user_remark = _("Payment against Salary Slip {0} for Employee {1}").format(
         ss.name, ss.employee_name
     )
@@ -86,8 +105,9 @@ def create_salary_payment_entry(salary_slip, payment_account):
             "credit_in_account_currency": 0,
             "party_type": "Employee",
             "party": ss.employee,
-            # "reference_type": "Salary Slip",
-            # "reference_name": ss.name,
+            # NOTE: Journal Entry Account.reference_type has no "Salary Slip"
+            # option, so the link is carried the other way — on the slip's
+            # custom_payment_journal_entry field — plus the remark below.
             "account_currency": company_currency,
         },
     )
@@ -99,19 +119,97 @@ def create_salary_payment_entry(salary_slip, payment_account):
             "account": payment_account,
             "debit_in_account_currency": 0,
             "credit_in_account_currency": flt(ss.net_pay),
-            # "reference_type": "Salary Slip",
-            # "reference_name": ss.name,
             "account_currency": company_currency,
         },
     )
 
-    je.insert(ignore_permissions=True)
+    je.flags.ignore_permissions = True
+    je.insert()
 
-    # Uncomment the next line if you want the JE auto-submitted instead of
-    # left as a draft for the accountant to review:
-    je.submit()
+    if cint(submit_je):
+        je.submit()
+
+    # Track the payment separately from the accrual JE so the "Make Payment
+    # Entry" button can tell whether this slip has actually been paid.
+    ss.db_set("custom_payment_journal_entry", je.name, update_modified=False)
+    ss.db_set("custom_payment_date", payment_date, update_modified=False)
 
     return je.name
+
+
+@frappe.whitelist()
+def update_payment_date(salary_slip, payment_date):
+    """Change the payment date on a slip whose payment JE is still a DRAFT.
+
+    Once the JE is submitted its posting date is locked — that is deliberate:
+    moving a posted GL entry to another date (and possibly another period) behind
+    the user's back is an accounting-integrity problem. In that case the user is
+    told to cancel and amend.
+    """
+    if not payment_date:
+        frappe.throw(_("Payment Date is required"))
+
+    ss = frappe.get_doc("Salary Slip", salary_slip)
+    je_name = ss.get("custom_payment_journal_entry")
+
+    if not je_name or not frappe.db.exists("Journal Entry", je_name):
+        frappe.throw(_("No payment Journal Entry found for Salary Slip {0}").format(ss.name))
+
+    je = frappe.get_doc("Journal Entry", je_name)
+
+    if je.docstatus == 1:
+        frappe.throw(
+            _(
+                "Journal Entry {0} is already submitted, so its posting date is locked. "
+                "Cancel and amend it to change the payment date."
+            ).format(frappe.utils.get_link_to_form("Journal Entry", je_name))
+        )
+    if je.docstatus == 2:
+        frappe.throw(_("Journal Entry {0} is cancelled.").format(je_name))
+
+    payment_date = getdate(payment_date)
+    je.posting_date = payment_date
+    if je.cheque_date:
+        je.cheque_date = payment_date
+    je.flags.ignore_permissions = True
+    je.save()
+
+    ss.db_set("custom_payment_date", payment_date, update_modified=False)
+
+    return je.name
+
+
+# =========================================================================
+#  Hours Worked guard
+# =========================================================================
+
+
+def validate_hours_worked(doc, method=None):
+    """Block submitting a Salary Slip with no Hours Worked.
+
+    Why a hard block and not just a warning: the Hourly Wage salary component's
+    formula is `custom_hours_worked * custom_rate_per_hour`, so a blank value
+    does not merely leave a field empty — it produces a slip with $0 gross pay,
+    $0 withholding and a $0 pay stub, and the accrual Journal Entry posts
+    nothing. That is far harder to unpick after the fact than being stopped here.
+
+    The form also pops a warning the moment you save a draft (see
+    public/js/payment_entry.js), so this only ever fires as a last line of
+    defence — or on an API/import path where no form is involved.
+    """
+    if flt(doc.get("custom_hours_worked")) > 0:
+        return
+
+    frappe.throw(
+        _(
+            "<b>Hours Worked is empty.</b><br><br>"
+            "Enter the hours for this pay period on the <b>Payment Days</b> tab "
+            "before submitting — pay is calculated as Hours Worked x Rate per Hour, "
+            "so submitting now would produce a slip with zero gross pay."
+        ),
+        title=_("Hours Worked Missing"),
+    )
+
 
 def set_net_pay_in_words(doc, method=None):
     words = frappe.utils.money_in_words(flt(doc.net_pay), doc.currency)
@@ -121,18 +219,3 @@ def set_net_pay_in_words(doc, method=None):
     # collapse any double spaces left behind
     words = re.sub(r'\s+', ' ', words).strip()
     doc.custom_total_in_words = words
-
-# -------------------------------------------------------------------------
-# NOTE if using "Server Script" (Option A) instead of a custom app:
-# Server Scripts of type "API" don't use @frappe.whitelist() / def — they
-# run as a script body with `frappe.flags.args` and you set the result via
-# `frappe.response`. Example adaptation:
-#
-#   salary_slip = frappe.flags.args.salary_slip
-#   payment_account = frappe.flags.args.payment_account
-#   ... (same logic as above, using frappe.get_doc etc.) ...
-#   frappe.response["message"] = je.name
-#
-# Then in the client script call method: "create_salary_payment_entry"
-# (just the API method name, no dotted path).
-# -------------------------------------------------------------------------

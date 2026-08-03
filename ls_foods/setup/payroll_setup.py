@@ -138,6 +138,41 @@ CUSTOM_FIELDS = {
 			"this slip). Do not edit.",
 			"module": MODULE,
 		},
+		# --- payment tracking -------------------------------------------------
+		# The standard `journal_entry` field on Salary Slip holds the ACCRUAL
+		# entry posted by ls_foods.payroll on submit. The payout is a second,
+		# separate Journal Entry, so it needs its own link — without it the
+		# "Make Payment Entry" button had no reliable way to tell whether a slip
+		# had actually been paid.
+		{
+			"fieldname": "custom_payment_section",
+			"label": "Payment",
+			"fieldtype": "Section Break",
+			"insert_after": "journal_entry",
+			"collapsible": 1,
+			"module": MODULE,
+		},
+		{
+			"fieldname": "custom_payment_date",
+			"label": "Payment Date",
+			"fieldtype": "Date",
+			"insert_after": "custom_payment_section",
+			"read_only": 1,
+			"description": "Date the employee was actually paid. Set from the Make "
+			"Payment Entry dialog; it is the posting date of the payment Journal Entry.",
+			"module": MODULE,
+		},
+		{
+			"fieldname": "custom_payment_journal_entry",
+			"label": "Payment Journal Entry",
+			"fieldtype": "Link",
+			"options": "Journal Entry",
+			"insert_after": "custom_payment_date",
+			"read_only": 1,
+			"description": "The payout entry (Dr Payroll Payable / Cr Bank). Separate "
+			"from the accrual entry in the Journal Entry field above.",
+			"module": MODULE,
+		},
 	],
 }
 
