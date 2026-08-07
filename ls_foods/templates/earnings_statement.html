@@ -143,6 +143,31 @@
         <td class="es-r">{{ money(row.year_to_date) }}</td>
       </tr>
       {%- endfor %}
+
+      {#
+        Expense reimbursements. These are NOT wages: the employee is being paid
+        back money they already spent, so the amount is excluded from Gross Pay
+        and from every tax calculation, then added to Net Pay after deductions.
+        Showing it here is what makes the stub arithmetic legible —
+        Gross - Deductions + Reimbursements = Net Pay.
+      #}
+      {%- if doc.custom_total_reimbursement %}
+      <tr><td colspan="4" style="height: 10px;"></td></tr>
+      <tr class="es-head">
+        <td style="width: 22%;">Reimbursements</td>
+        <td class="es-c" style="width: 30%;">Expense Claim</td>
+        <td class="es-r" style="width: 24%;">This Period</td>
+        <td class="es-r" style="width: 24%;">Not Taxable</td>
+      </tr>
+      {%- for row in doc.custom_reimbursements %}
+      <tr class="es-row">
+        <td></td>
+        <td class="es-grey">{{ row.expense_type or row.expense_claim }}</td>
+        <td class="es-r">{{ money(row.amount) }}</td>
+        <td class="es-r"></td>
+      </tr>
+      {%- endfor %}
+      {%- endif %}
     </table>
     <table class="es-band-tot es-totrow">
       <tr>
@@ -156,6 +181,9 @@
 
   <div style="margin-top: 24px; font-weight: bold;">
     Your deductions for this period are ${{ money(doc.total_deduction) }}
+    {%- if doc.custom_total_reimbursement %},
+    and you were reimbursed ${{ money(doc.custom_total_reimbursement) }} for expenses
+    {%- endif %}
   </div>
 
   {# ============================= CUT LINE ============================= #}

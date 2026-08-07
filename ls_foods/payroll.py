@@ -21,6 +21,12 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 
+from ls_foods.reimbursement_payroll import (
+	mark_claims_paid,
+	reimbursement_journal_lines,
+	unlink_claims,
+)
+
 
 def set_ytd_gross_pay(doc, method=None):
 	"""Before Validate on Salary Slip.
@@ -151,7 +157,7 @@ def post_accrual_journal_entry(doc, method=None):
 	existing = doc.get("journal_entry")
 	if existing and frappe.db.get_value("Journal Entry", existing, "docstatus") == 1:
 		return  # already has an active accrual JE (idempotent / re-submit guard)
-	if not doc.company or not (doc.earnings or doc.deductions):
+	if not doc.company or not (doc.earnings or doc.deductions or doc.get("custom_reimbursements")):
 		return
 
 	company = doc.company
@@ -168,16 +174,21 @@ def post_accrual_journal_entry(doc, method=None):
 	lines = []
 	totals = {"debit": 0.0, "credit": 0.0}
 
-	def add(account, debit=0.0, credit=0.0):
+	def add(account, debit=0.0, credit=0.0, **extra):
 		debit, credit = flt(debit, precision), flt(credit, precision)
 		if not debit and not credit:
 			return
-		lines.append({
+		line = {
 			"account": account,
 			"debit_in_account_currency": debit,
 			"credit_in_account_currency": credit,
 			"cost_center": cost_center,
-		})
+		}
+		# Reimbursement lines carry their own cost center, a party (the payable
+		# account demands one) and the Expense Claim reference that lets HRMS mark
+		# the claim Paid.
+		line.update({k: v for k, v in extra.items() if v})
+		lines.append(line)
 		totals["debit"] += debit
 		totals["credit"] += credit
 
@@ -216,6 +227,28 @@ def post_accrual_journal_entry(doc, method=None):
 				else:
 					add(acct, credit=amt)
 
+	# Expense reimbursements riding on this paycheck.
+	#   Dr Employee Reimbursements Payable  -> clears what the Expense Claim
+	#      credited when it was submitted; the expense itself was booked then, so
+	#      it is deliberately NOT booked again here.
+	#   Dr new / Cr old                     -> only when the payroll clerk
+	#      reassigned the account; nets to zero, so the paycheck is unaffected.
+	# Because these are net debits, the balancing figure below grows by the same
+	# amount — i.e. Payroll Payable is credited with wages AND reimbursement, and
+	# the existing payment entry pays the employee once, for the total.
+	# See ls_foods/reimbursement_payroll.py for the full rationale.
+	for line in reimbursement_journal_lines(doc):
+		add(
+			line["account"],
+			debit=line.get("debit"),
+			credit=line.get("credit"),
+			cost_center=line.get("cost_center"),
+			party_type=line.get("party_type"),
+			party=line.get("party"),
+			reference_type=line.get("reference_type"),
+			reference_name=line.get("reference_name"),
+		)
+
 	# Net pay -> credit Payroll Payable (balancing figure; guarantees a clean entry)
 	net = flt(totals["debit"] - totals["credit"], precision)
 	if net > 0:
@@ -246,6 +279,12 @@ def post_accrual_journal_entry(doc, method=None):
 	je.submit()
 
 	doc.db_set("journal_entry", je.name, update_modified=False)
+
+	# HRMS's own Journal Entry hook has already read the Expense Claim references
+	# off this entry and flipped those claims to Paid; this only records which
+	# paycheck did it.
+	mark_claims_paid(doc, je.name)
+
 	frappe.msgprint(_("Posted payroll journal entry {0}.").format(je.name),
 	                alert=True, indicator="green")
 
@@ -260,3 +299,9 @@ def reverse_accrual_journal_entry(doc, method=None):
 		if jdoc.docstatus == 1:
 			jdoc.flags.ignore_permissions = True
 			jdoc.cancel()
+
+	# Cancelling the JE already put the claims back to unpaid (HRMS recalculates
+	# the reimbursed amount, ls_foods.reimbursement clears the paid date). Drop
+	# the back-link to a slip that no longer pays them, so they can be picked up
+	# on the next run.
+	unlink_claims(doc)

@@ -8,11 +8,26 @@
 //   2. Make Payment Entry — now asks for the Payment Date, which becomes the
 //      Journal Entry's posting date, and can leave the JE as a draft so the
 //      date stays editable.
+//   3. Reimbursements tab — pull in the employee's approved, unpaid expense
+//      claims and pay them out with this paycheck. See
+//      ls_foods/reimbursement_payroll.py for the accounting.
 // =========================================================================
 
 frappe.ui.form.on("Salary Slip", {
+	setup(frm) {
+		// Reassigning a cost only ever moves it to another real expense account
+		// in the same company.
+		frm.set_query("expense_account", "custom_reimbursements", () => ({
+			filters: { company: frm.doc.company, is_group: 0, root_type: "Expense" },
+		}));
+		frm.set_query("cost_center", "custom_reimbursements", () => ({
+			filters: { company: frm.doc.company, is_group: 0 },
+		}));
+	},
+
 	refresh(frm) {
 		ls_show_hours_warning(frm);
+		ls_render_reimbursement_button(frm);
 
 		if (frm.doc.docstatus !== 1) return;
 
@@ -48,6 +63,67 @@ frappe.ui.form.on("Salary Slip", {
 		}
 	},
 });
+
+// ------------------------------------------------------- reimbursements tab
+function ls_render_reimbursement_button(frm) {
+	if (frm.doc.docstatus !== 0 || !frm.doc.employee) return;
+
+	frm.add_custom_button(__("Get Approved Reimbursements"), () => {
+		frappe.call({
+			method: "ls_foods.reimbursement_payroll.get_approved_reimbursements",
+			args: {
+				salary_slip: frm.doc.name,
+				employee: frm.doc.employee,
+				company: frm.doc.company,
+				upto_date: frm.doc.end_date,
+			},
+			freeze: true,
+			freeze_message: __("Looking for approved expense claims..."),
+			callback(r) {
+				const rows = r.message || [];
+				if (!rows.length) {
+					frappe.msgprint({
+						title: __("Nothing to Reimburse"),
+						indicator: "blue",
+						message: __(
+							"{0} has no approved, unpaid expense claims dated on or before {1}.<br><br>" +
+								"A claim only appears here once it has been <b>submitted with an " +
+								"approval status of Approved</b> — a claim still sitting in Draft is " +
+								"only a request.",
+							[
+								frm.doc.employee_name,
+								frappe.format(frm.doc.end_date, { fieldtype: "Date" }),
+							]
+						),
+					});
+					return;
+				}
+
+				const existing = new Set(
+					(frm.doc.custom_reimbursements || []).map((d) => d.expense_claim)
+				);
+				let added = 0;
+
+				rows.forEach((row) => {
+					if (existing.has(row.expense_claim)) return;
+					const child = frm.add_child("custom_reimbursements");
+					Object.assign(child, row);
+					added += 1;
+				});
+
+				frm.refresh_field("custom_reimbursements");
+				frm.script_manager.trigger("validate");
+
+				frappe.show_alert({
+					message: added
+						? __("Added {0} approved claim(s).", [added])
+						: __("Already up to date — nothing new to add."),
+					indicator: added ? "green" : "blue",
+				});
+			},
+		});
+	}).addClass("btn-primary-light");
+}
 
 // ------------------------------------------------------------ hours warning
 function ls_show_hours_warning(frm) {

@@ -13,6 +13,7 @@
   "uom",
   "rate",
   "amount",
+  "receipt",
   "accounting_section",
   "expense_account",
   "warehouse",
@@ -79,6 +80,14 @@
    "in_list_view": 1,
    "label": "Amount",
    "read_only": 1
+  },
+  {
+   "columns": 1,
+   "description": "Photo or PDF of the till receipt. Required on every purchased-items row.",
+   "fieldname": "receipt",
+   "fieldtype": "Attach",
+   "in_list_view": 1,
+   "label": "Receipt"
   },
   {
    "fieldname": "accounting_section",

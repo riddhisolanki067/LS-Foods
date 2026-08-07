@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-08-07 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "expense_claim",
+  "expense_type",
+  "column_break_dates",
+  "request_date",
+  "approval_date",
+  "amounts_section",
+  "outstanding_amount",
+  "column_break_amounts",
+  "amount",
+  "accounting_section",
+  "expense_account",
+  "original_account",
+  "column_break_accounting",
+  "cost_center",
+  "description_section",
+  "description"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "expense_claim",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Expense Claim",
+   "options": "Expense Claim",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "Copied from the claim so the payroll clerk can see what is being reimbursed without opening it.",
+   "fieldname": "expense_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Expense Claim Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "request_date",
+   "fieldtype": "Date",
+   "label": "Request Date",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "approval_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Approval Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amounts_section",
+   "fieldtype": "Section Break",
+   "label": "Amount"
+  },
+  {
+   "description": "Still owed to the employee on this claim at the moment it was fetched.",
+   "fieldname": "outstanding_amount",
+   "fieldtype": "Currency",
+   "label": "Outstanding Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_amounts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "description": "How much of this claim to pay on this slip. Defaults to the full outstanding amount; reduce it to reimburse in instalments.",
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount",
+   "reqd": 1
+  },
+  {
+   "fieldname": "accounting_section",
+   "fieldtype": "Section Break",
+   "label": "Account Assignment"
+  },
+  {
+   "columns": 3,
+   "description": "The expense account this reimbursement should sit in. Pre-filled with the account the claim already posted to. Change it and the payroll journal entry reclassifies the cost from the old account to this one - no need to touch the claim.",
+   "fieldname": "expense_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Expense Account",
+   "options": "Account"
+  },
+  {
+   "description": "The account the Expense Claim actually debited. Kept so a change above can be posted as a reclassification instead of a duplicate expense.",
+   "fieldname": "original_account",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Original Account",
+   "options": "Account",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_accounting",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cost_center",
+   "fieldtype": "Link",
+   "label": "Cost Center",
+   "options": "Cost Center"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "description_section",
+   "fieldtype": "Section Break",
+   "label": "Description"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-07 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ls Foods",
+ "name": "Salary Slip Reimbursement",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

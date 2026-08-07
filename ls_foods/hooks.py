@@ -38,13 +38,27 @@ fixtures = [
 # Expense Claim = the Employee Reimbursement module (mileage, expenses, and
 #   stock/supplies purchases that increase inventory). See ls_foods/reimbursement.py
 #   and setup/reimbursement_setup.py for the design rationale and the double entry.
-# before_validate: compute mileage amounts and mirror the Purchased Items table
-#   into the standard Expenses table, so the claim total / GL / payable include it.
+# before_validate: compute row amounts (Qty x Rate) and mirror the Purchased
+#   Items table into the standard Expenses table, so the claim total / GL /
+#   payable include it.
+# validate: derive the Requested/Approved/Paid status, the expense-type summary
+#   and the approval date.
+# before_submit: block a claim with a missing receipt (per Expense Claim Type).
 # on_submit / on_cancel: post / cancel the Material Receipt Stock Entry.
+#
+# Salary Slip "Reimbursements" tab: approved claims are selected there and paid
+#   out with the wages. apply_reimbursements adds the total to NET pay only —
+#   never to gross_pay, because every tax formula on this site is keyed off
+#   gross_pay and a reimbursement is not taxable wages. The accrual JE then
+#   debits the Employee Reimbursements Payable (referencing the claim, which is
+#   what marks it Paid). See ls_foods/reimbursement_payroll.py.
 doc_events = {
 	"Salary Slip": {
 		"before_validate": "ls_foods.payroll.set_ytd_gross_pay",
 		"validate": [
+			# ORDER MATTERS. apply_reimbursements adjusts net_pay, so it has to run
+			# before the amount-in-words is written from it.
+			"ls_foods.reimbursement_payroll.apply_reimbursements",
 			"ls_foods.setup.payment_entry.set_net_pay_in_words",
 			"ls_foods.payroll.set_mtd_gross_pay",
 		],
@@ -54,8 +68,24 @@ doc_events = {
 	},
 	"Expense Claim": {
 		"before_validate": "ls_foods.reimbursement.sync_reimbursement_rows",
+		"validate": "ls_foods.reimbursement.finalize_reimbursement_fields",
+		"before_submit": "ls_foods.reimbursement.validate_receipts",
 		"on_submit": "ls_foods.reimbursement.post_stock_entry",
 		"on_cancel": "ls_foods.reimbursement.cancel_stock_entry",
+	},
+	# HRMS already recalculates an Expense Claim's reimbursed amount and standard
+	# status from any voucher that references it. These carry that through to the
+	# Requested/Approved/Paid field and the paid date. ls_foods is installed last,
+	# so these run after the HRMS handlers on the same events.
+	"Journal Entry": {
+		"on_submit": "ls_foods.reimbursement.sync_claims_from_voucher",
+		"on_cancel": "ls_foods.reimbursement.sync_claims_from_voucher",
+		"on_update_after_submit": "ls_foods.reimbursement.sync_claims_from_voucher",
+	},
+	"Payment Entry": {
+		"on_submit": "ls_foods.reimbursement.sync_claims_from_voucher",
+		"on_cancel": "ls_foods.reimbursement.sync_claims_from_voucher",
+		"on_update_after_submit": "ls_foods.reimbursement.sync_claims_from_voucher",
 	},
 }
 
@@ -107,7 +137,7 @@ doctype_js = {
 	"Salary Slip": "public/js/payment_entry.js",
 	"Expense Claim": "public/js/expense_claim.js",
 }
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_list_js = {"Expense Claim": "public/js/expense_claim_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
