@@ -16,7 +16,9 @@ from frappe.utils import cint, flt, getdate, nowdate
 
 
 @frappe.whitelist()
-def create_salary_payment_entry(salary_slip, payment_account, payment_date=None, submit_je=1):
+def create_salary_payment_entry(
+    salary_slip, payment_account, payment_date=None, submit_je=1, cheque_no=None
+):
     """
     Create the Journal Entry that pays out a Salary Slip's net pay from the
     selected `payment_account`.
@@ -27,7 +29,24 @@ def create_salary_payment_entry(salary_slip, payment_account, payment_date=None,
     `payment_date` becomes the JE's posting date — i.e. the date the employee was
     actually paid, which is what lands in the bank reconciliation and the GL.
     It used to be hardcoded to today, so a slip entered late was posted on the
-    wrong day. Defaults to today when not supplied.
+    wrong day. Defaults to today when not supplied. The SAME date is also written
+    to the Reference Date (`cheque_date`), because for a payroll payment the
+    cheque is dated the day it is handed over — two dates that could drift apart
+    would only invite a reconciliation mismatch.
+
+    `cheque_no` is the cheque number, and lands in the JE's Reference Number
+    field. It is MANDATORY, and that is not a design choice we are free to make:
+    the entry is posted as an **Entry Type of Bank Entry** (see below), and
+    ERPNext's `validate_cheque_info` refuses a Bank Entry with no Reference No /
+    Reference Date. Paying by transfer rather than cheque? Put the ACH/transfer
+    reference in the same box — that is exactly what the field is for, and it is
+    what makes the payment findable during bank reconciliation.
+
+    Why Entry Type = Bank Entry rather than a plain Journal Entry: this voucher
+    moves money out of a bank account, and Bank Entry is what ERPNext's bank
+    reconciliation, the Bank Clearance report and the cash-flow statement look
+    for. A generic Journal Entry posts the same GL rows but sits outside those
+    tools.
 
     `submit_je=0` leaves the Journal Entry as a DRAFT. That is the supported way
     to correct a payment date after the fact: a submitted JE's posting date is
@@ -37,6 +56,18 @@ def create_salary_payment_entry(salary_slip, payment_account, payment_date=None,
 
     if not payment_account:
         frappe.throw(_("Payment Account is required"))
+
+    cheque_no = (cheque_no or "").strip()
+    if not cheque_no:
+        frappe.throw(
+            _(
+                "<b>Cheque Number is required.</b><br><br>"
+                "The payment is posted as a <b>Bank Entry</b>, and ERPNext will not accept "
+                "a Bank Entry without a Reference Number. If the employee was paid by "
+                "transfer rather than by cheque, enter the transfer/ACH reference here."
+            ),
+            title=_("Cheque Number Missing"),
+        )
 
     ss = frappe.get_doc("Salary Slip", salary_slip)
 
@@ -85,13 +116,18 @@ def create_salary_payment_entry(salary_slip, payment_account, payment_date=None,
     company_currency = frappe.get_cached_value("Company", ss.company, "default_currency")
 
     je = frappe.new_doc("Journal Entry")
-    je.voucher_type = "Journal Entry"
+    # Bank Entry, not a plain Journal Entry: this voucher takes money out of the
+    # bank, and only a Bank Entry is picked up by bank reconciliation, the Bank
+    # Clearance report and the cash-flow statement.
+    je.voucher_type = "Bank Entry"
     je.company = ss.company
     je.posting_date = payment_date
     je.multi_currency = 0
-    # NOTE: deliberately NOT setting cheque_date — ERPNext makes Reference No
-    # mandatory the moment a Reference Date is present, which would block the
-    # submit for anyone paying by transfer rather than cheque.
+    # Reference Number / Reference Date on the form. ERPNext requires BOTH on a
+    # Bank Entry, which is why cheque_no is validated as mandatory above. The
+    # reference date is the payment date by design — same day the cheque is cut.
+    je.cheque_no = cheque_no
+    je.cheque_date = payment_date
     je.user_remark = _("Payment against Salary Slip {0} for Employee {1}").format(
         ss.name, ss.employee_name
     )
@@ -169,8 +205,10 @@ def update_payment_date(salary_slip, payment_date):
 
     payment_date = getdate(payment_date)
     je.posting_date = payment_date
-    if je.cheque_date:
-        je.cheque_date = payment_date
+    # Reference Date tracks the payment date — they are the same fact, so letting
+    # one move without the other would leave the cheque dated on a day the
+    # payment no longer claims to have happened.
+    je.cheque_date = payment_date
     je.flags.ignore_permissions = True
     je.save()
 

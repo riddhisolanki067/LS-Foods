@@ -5,9 +5,10 @@
 //   1. Hours Worked guard — pops a warning on save if the Payment Days tab's
 //      Hours Worked is blank. (Submitting is blocked server-side; see
 //      ls_foods/setup/payment_entry.py::validate_hours_worked.)
-//   2. Make Payment Entry — now asks for the Payment Date, which becomes the
-//      Journal Entry's posting date, and can leave the JE as a draft so the
-//      date stays editable.
+//   2. Make Payment Entry — asks for the Payment Account, the Payment Date and
+//      the Cheque Number, then posts a **Bank Entry** Journal Entry: payment
+//      date -> posting date AND Reference Date, cheque number -> Reference
+//      Number. It can leave the JE as a draft so the date stays editable.
 //   3. Reimbursements tab — pull in the employee's approved, unpaid expense
 //      claims and pay them out with this paycheck. See
 //      ls_foods/reimbursement_payroll.py for the accounting.
@@ -204,7 +205,19 @@ function ls_show_payment_dialog(frm) {
 				reqd: 1,
 				default: frappe.datetime.get_today(),
 				description: __(
-					"The date the employee was actually paid. Becomes the Journal Entry's posting date."
+					"The date the employee was actually paid. Becomes the Journal Entry's " +
+						"posting date and its Reference Date."
+				),
+			},
+			{
+				label: __("Cheque Number"),
+				fieldname: "cheque_no",
+				fieldtype: "Data",
+				reqd: 1,
+				description: __(
+					"Goes into the Journal Entry's <b>Reference Number</b>. Required — the " +
+						"payment posts as a Bank Entry, which ERPNext will not accept without " +
+						"one. Paid by transfer instead of cheque? Enter the transfer reference."
 				),
 			},
 			{ fieldtype: "Column Break" },
@@ -237,6 +250,7 @@ function ls_show_payment_dialog(frm) {
 					salary_slip: frm.doc.name,
 					payment_account: values.payment_account,
 					payment_date: values.payment_date,
+					cheque_no: values.cheque_no,
 					submit_je: values.submit_je ? 1 : 0,
 				},
 				freeze: true,

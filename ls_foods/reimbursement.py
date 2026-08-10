@@ -118,6 +118,14 @@ def set_row_amounts(doc):
 	zeroing what they typed — so both directions of data entry work and the Qty
 	column is never empty for reporting.
 
+	**Mileage is the exception, deliberately.** On a mileage row the employee
+	enters miles ONLY; the rate comes from the Expense Claim Type master and the
+	amount is always miles x that rate. A hand-typed amount is overwritten rather
+	than accepted, because the whole point of a mileage rate held centrally is
+	that nobody gets to reimburse themselves at their own rate. If the master
+	rate is blank the amount would silently be zero, so ``validate_mileage_rate``
+	warns on save and blocks the submit instead of letting a $0 claim through.
+
 	This is the authoritative copy; the form does the same arithmetic live so the
 	number moves as you type, but an import or an API call gets the same result.
 	"""
@@ -145,6 +153,12 @@ def set_row_amounts(doc):
 
 		if flt(row.custom_rate):
 			row.amount = flt(qty * flt(row.custom_rate), row.precision("amount"))
+		elif row.custom_is_mileage_type:
+			# Mileage with no rate on the master. Do NOT reverse-engineer a rate
+			# from whatever was typed in Amount — that would be the employee
+			# setting their own mileage rate. Zero it and let validate_mileage_rate
+			# say why.
+			row.amount = 0.0
 		elif flt(row.amount):
 			# Amount typed directly — derive the rate so Qty x Rate still reconciles.
 			row.custom_rate = flt(flt(row.amount) / qty, row.precision("custom_rate"))
@@ -266,6 +280,48 @@ def finalize_reimbursement_fields(doc, method=None):
 	set_expense_type_summary(doc)
 	set_approval_date(doc)
 	set_reimbursement_status(doc)
+	validate_mileage_rate(doc, hard=False)
+
+
+def validate_mileage_rate(doc, hard=False):
+	"""A mileage row is worthless without a rate — say so early, block at submit.
+
+	The rate lives on the Expense Claim Type (``Default Rate per Mile``), which is
+	the whole point: one number, maintained by the bookkeeper, applied to every
+	employee. But a blank one does not fail loudly on its own — it just produces
+	``miles x 0 = $0.00``, and a $0 claim is the kind of thing that gets submitted,
+	approved and paid before anyone notices.
+
+	Warn on save so the person filling the claim in sees it immediately; hard-block
+	at submit, the same warn-then-block shape used for Hours Worked on the Salary
+	Slip and for receipts here, so the site behaves one way throughout.
+	"""
+	offenders = []
+	for row in doc.get("expenses") or []:
+		if not row.get("custom_is_mileage_type"):
+			continue
+		if flt(row.get("custom_rate")):
+			continue
+		offenders.append((row.idx, row.expense_type))
+
+	if not offenders:
+		return
+
+	types = sorted({t for _idx, t in offenders})
+	links = ", ".join(
+		frappe.utils.get_link_to_form("Expense Claim Type", t) for t in types
+	)
+	message = _(
+		"No <b>Default Rate per Mile</b> is set on {0}, so the mileage row(s) "
+		"{1} calculate to zero.<br><br>"
+		"Open the Expense Claim Type and enter the rate per mile — it is applied "
+		"to every claim from then on, so it only has to be set once."
+	).format(links, ", ".join(str(idx) for idx, _t in offenders))
+
+	if hard:
+		frappe.throw(message, title=_("Mileage Rate Not Set"))
+
+	frappe.msgprint(message, title=_("Mileage Rate Not Set"), indicator="orange")
 
 
 def set_expense_type_summary(doc):
@@ -355,7 +411,12 @@ def validate_receipts(doc, method=None):
 	everything except Mileage, because there is no receipt for driving your own
 	car — but if the client later decides meals under $10 don't need one either,
 	that is a checkbox, not a change request.
+
+	Also the last gate on the mileage rate — a claim whose mileage rows compute to
+	zero must not reach the ledger.
 	"""
+	validate_mileage_rate(doc, hard=True)
+
 	missing = []
 
 	for row in doc.get("expenses") or []:

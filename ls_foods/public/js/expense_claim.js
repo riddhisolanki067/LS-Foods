@@ -79,9 +79,31 @@ frappe.ui.form.on("Expense Claim Detail", {
 
 	// Amount typed directly (no rate) — back-fill the rate so Qty x Rate still
 	// reconciles, mirroring what the server does on save.
+	//
+	// Mileage is excluded: there the employee enters Miles and nothing else, and
+	// the rate is the company's, held on the Expense Claim Type. Accepting a typed
+	// amount would let someone reimburse themselves at a rate of their choosing.
 	amount(frm, cdt, cdn) {
 		const row = locals[cdt][cdn];
 		if (flt(row.custom_rate)) return;
+
+		if (row.custom_is_mileage_type) {
+			frappe.model.set_value(cdt, cdn, "amount", 0);
+			frappe.model.set_value(cdt, cdn, "sanctioned_amount", 0);
+			frappe.msgprint({
+				title: __("Enter Miles, Not Amount"),
+				indicator: "orange",
+				message: __(
+					"Mileage is paid at the rate on the <b>{0}</b> expense claim type — enter " +
+						"the miles driven and the amount is worked out for you.<br><br>" +
+						"The amount is zero because no <b>Default Rate per Mile</b> has been set " +
+						"on that type yet. Ask the bookkeeper to set it; it only has to be done once.",
+					[row.expense_type]
+				),
+			});
+			return;
+		}
+
 		const qty = flt(row.custom_qty) || 1;
 		frappe.model.set_value(cdt, cdn, "custom_qty", qty);
 		frappe.model.set_value(cdt, cdn, "custom_rate", flt(row.amount) / qty);
