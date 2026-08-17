@@ -7,3 +7,4 @@
 ls_foods.patches.v0_0_1.setup_household_payroll
 ls_foods.patches.v0_0_2.setup_reimbursement_and_hr
 ls_foods.patches.v0_0_3.setup_reimbursement_requests
+ls_foods.patches.v0_0_5.expense_claim_workflow

@@ -57,6 +57,8 @@ import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
+from ls_foods.setup import expense_claim_workflow
+
 MODULE = "Ls Foods"
 
 MILEAGE_TYPE = "Mileage"
@@ -77,7 +79,9 @@ DEPRECATED_FIELDS = [
 
 # Status the payroll clerk sees, in the client's own vocabulary. Derived from the
 # standard docstatus / approval_status / status trio — see reimbursement.py::
-# set_reimbursement_status for the mapping and why we don't use a Workflow.
+# set_reimbursement_status for the mapping. The Draft -> Approved/Rejected -> Paid
+# Workflow added later shows the SAME truth as the record's status indicator; see
+# setup/expense_claim_workflow.py for why the two do not fight.
 STATUS_FIELD = "custom_reimbursement_status"
 STATUS_OPTIONS = "\n".join(["", "Draft", "Requested", "Approved", "Rejected", "Paid", "Cancelled"])
 
@@ -90,6 +94,23 @@ LIST_VIEW_FIELDS = [
 ]
 # Standard columns pushed off the list to make room for the four above.
 LIST_VIEW_FIELDS_TO_HIDE = ["total_claimed_amount", "total_amount_reimbursed"]
+
+
+# Rows in the Expenses table that ls_foods maintains for the Purchased Items table
+# must not be hand-edited — they are rebuilt from scratch on every save, so a typed
+# value silently reverts. Locking them is the honest version of that: the field
+# greys out on the auto row only (read_only_depends_on is evaluated per grid row)
+# and stays fully editable on every row the user owns. The Expense Date in
+# particular is now driven by the Date on the Purchased Items row.
+AUTO_ROW_LOCKED_FIELDS = [
+	"expense_date",
+	"expense_type",
+	"description",
+	"amount",
+	"sanctioned_amount",
+]
+AUTO_ROW_LOCKED_CUSTOM_FIELDS = ["custom_qty", "custom_rate", "custom_receipt"]
+AUTO_ROW_CONDITION = "eval:doc.custom_auto_generated"
 
 
 CUSTOM_FIELDS = {
@@ -117,6 +138,40 @@ CUSTOM_FIELDS = {
 			"in_list_view": 1,
 			"description": "The claim type(s) on this request, kept in step with the "
 			"Expenses table so the list can be read at a glance.",
+			"module": MODULE,
+		},
+		{
+			# The standard "Expense Approver" field is unusable on this site: its link
+			# query (department_approver.get_approvers) returns ONLY the approver named
+			# on the Employee record or on the employee's Department, and THROWS
+			# "Please set Expense Approver for the Employee" when neither is set. LS
+			# Foods has no fixed approver — whoever signs off picks themselves — so the
+			# standard field is hidden (see ensure_field_properties) and this one takes
+			# its place, listing every enabled user. ls_foods copies the choice into the
+			# standard field on save so HRMS's document sharing, its approver
+			# notification and the mobile app all keep working off it.
+			"fieldname": "custom_approver",
+			"label": "Approver",
+			"fieldtype": "Link",
+			"options": "User",
+			"insert_after": "expense_approver",
+			"ignore_user_permissions": 1,
+			"in_standard_filter": 1,
+			"description": "The person approving this claim — they select themselves. Any "
+			"enabled user can be picked; nothing has to be pre-set on the Employee or the "
+			"Department. To actually click Approve they need the Expense Approver or "
+			"HR Manager role.",
+			"module": MODULE,
+		},
+		{
+			"fieldname": "custom_approver_name",
+			"label": "Approver Name",
+			"fieldtype": "Data",
+			"insert_after": "custom_approver",
+			"fetch_from": "custom_approver.full_name",
+			"read_only": 1,
+			"allow_on_submit": 1,
+			"description": "Full name of the approver, for the list and for print.",
 			"module": MODULE,
 		},
 		{
@@ -342,12 +397,14 @@ CUSTOM_FIELDS = {
 
 
 def run():
-	"""Idempotent. Called from after_install and the v0_0_2 / v0_0_3 patches."""
+	"""Idempotent. Called from after_install and the v0_0_2 / v0_0_3 / v0_0_5 patches."""
 	ensure_custom_fields()
+	ensure_field_properties()
 	drop_deprecated_fields()
 	ensure_list_view()
 	ensure_expense_claim_types()
 	ensure_payable_accounts()
+	expense_claim_workflow.run()
 
 
 def ensure_custom_fields():
@@ -358,6 +415,61 @@ def ensure_custom_fields():
 			name = f"{dt}-{f['fieldname']}"
 			if frappe.db.exists("Custom Field", name):
 				frappe.db.set_value("Custom Field", name, "module", MODULE, update_modified=False)
+	frappe.db.commit()
+
+
+def after_migrate():
+	"""Re-apply the parts of this setup that a migrate can undo.
+
+	Two reasons this has to run on EVERY migrate rather than once in a patch:
+
+	* Fixture import runs AFTER patches, and it rewrites the Custom Field records
+	  from ``fixtures/custom_field.json``. Any property written by a patch onto an
+	  existing custom field is therefore reverted on the same migrate that applies
+	  it. (The fixture file now carries these properties too, but this makes the
+	  order irrelevant.)
+	* It makes the workflow self-healing, which is what lets this app claim to be
+	  the source of truth for it: deactivate or edit it in the UI and the next
+	  migrate puts it back.
+	"""
+	ensure_field_properties()
+	expense_claim_workflow.run()
+
+
+def ensure_field_properties():
+	"""Properties that have to be applied to fields which already exist.
+
+	``create_custom_fields`` only ever INSERTS — it skips a field that is already
+	there, so adding a key to CUSTOM_FIELDS does nothing on a site where the field
+	was created by an earlier release. Anything that has to change on an existing
+	field is therefore written here, and standard (HRMS-owned) fields go through
+	Property Setters so nothing in hrms is edited.
+	"""
+	# Hide the standard Expense Approver. Its link query throws unless an approver
+	# is pre-set on the Employee or the Department, which is exactly the workflow
+	# LS Foods does not have — custom_approver replaces it and is copied into it
+	# on save, so the field keeps its value and only stops being typed into.
+	make_property_setter(
+		"Expense Claim", "expense_approver", "hidden", 1, "Check", validate_fields_for_doctype=False
+	)
+
+	# Grey out the auto-maintained Purchased Items mirror row, per row.
+	for fieldname in AUTO_ROW_LOCKED_FIELDS:
+		make_property_setter(
+			"Expense Claim Detail",
+			fieldname,
+			"read_only_depends_on",
+			AUTO_ROW_CONDITION,
+			"Code",
+			validate_fields_for_doctype=False,
+		)
+	for fieldname in AUTO_ROW_LOCKED_CUSTOM_FIELDS:
+		name = f"Expense Claim Detail-{fieldname}"
+		if frappe.db.exists("Custom Field", name):
+			frappe.db.set_value(
+				"Custom Field", name, "read_only_depends_on", AUTO_ROW_CONDITION, update_modified=False
+			)
+
 	frappe.db.commit()
 
 

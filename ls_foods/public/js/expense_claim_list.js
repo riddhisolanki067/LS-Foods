@@ -11,6 +11,14 @@
 // file loads after it, so we EXTEND the existing settings object instead of
 // replacing it — otherwise `company` would stop being fetched and the standard
 // list would lose it.
+//
+// NOTE 2: while the Draft -> Approved/Rejected -> Paid Workflow is active it wins
+// the indicator — frappe.get_indicator checks the workflow state field before it
+// ever calls get_indicator here — and colours the row from Workflow State.style
+// instead (blue Approved, green Paid, red Rejected, grey Draft/Cancelled: the same
+// scheme as below, on purpose). get_indicator is kept as the fallback for a site
+// where the workflow is switched off, which is the one thing that would otherwise
+// silently drop the colouring back to the standard Draft/Unpaid/Paid.
 // =========================================================================
 
 frappe.listview_settings["Expense Claim"] = Object.assign(

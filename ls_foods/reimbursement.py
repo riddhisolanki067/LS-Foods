@@ -51,12 +51,22 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 
+from ls_foods.setup.expense_claim_workflow import STATE_FIELD, derive_state
 from ls_foods.setup.reimbursement_setup import (
 	STOCK_TYPE,
 	_clearing_account,
 	_default_expense_account,
 	ensure_claim_type_accounts,
 )
+
+# The role the workflow's Approve / Reject transitions are granted to. Two things
+# have to be true of it and are true of Expense Approver: it must be able to write
+# Expense Claim.approval_status, which is **permlevel 1** — Frappe silently RESETS a
+# permlevel field the user cannot write, so the Approve click would revert the status
+# to Draft and the submit would then fail with "Approval Status must be 'Approved' or
+# 'Rejected'" — and it must be the ONLY role on the transition, or a user holding
+# several gets one duplicate Approve button per role.
+APPROVER_ROLES = ("Expense Approver",)
 
 # ===================================================================
 #  before_validate — mileage amounts + mirror stock rows into expenses
@@ -65,9 +75,28 @@ from ls_foods.setup.reimbursement_setup import (
 
 def sync_reimbursement_rows(doc, method=None):
 	set_request_date(doc)
+	set_approver(doc)
 	set_default_cost_centers(doc)
 	set_row_amounts(doc)
 	sync_stock_items_to_expenses(doc)
+
+
+def set_approver(doc):
+	"""Keep ``custom_approver`` and the standard ``expense_approver`` in step.
+
+	The custom field is the one on the form (the standard one is hidden — see
+	reimbursement_setup.ensure_field_properties for why its link query is unusable
+	here), but HRMS itself reads ``expense_approver``: it shares the document with
+	that user (``share_doc_with_approver`` on every update), emails them when the
+	claim is raised, and drives the approver's list in the HR mobile app off it.
+	So the custom field WINS and is copied into the standard one, and an older
+	claim that only has the standard value has it copied back the other way.
+	"""
+	if doc.get("custom_approver"):
+		if doc.get("expense_approver") != doc.custom_approver:
+			doc.expense_approver = doc.custom_approver
+	elif doc.get("expense_approver"):
+		doc.custom_approver = doc.expense_approver
 
 
 def set_request_date(doc):
@@ -171,7 +200,18 @@ def set_row_amounts(doc):
 
 
 def sync_stock_items_to_expenses(doc):
-	"""Rebuild the auto-generated expense rows that mirror ``custom_stock_items``."""
+	"""Rebuild the auto-generated expense rows that mirror ``custom_stock_items``.
+
+	The mirror rows are grouped by **account + cost center + date**, and the date
+	comes from the ``Date`` column on the Purchased Items row. That grouping key is
+	the fix for a real complaint: the Expense Date on a mirrored row used to be
+	stamped with the claim's posting date on every save, so editing it in the
+	Expenses table appeared to "jump back to today". The date is now a fact about
+	the purchase, entered where the purchase is entered, and the Expenses row
+	follows it (the field is greyed out on auto rows so it is clear which one to
+	edit). Two receipts from different days therefore produce two dated rows
+	instead of one lump.
+	"""
 	rows = doc.get("custom_stock_items") or []
 
 	# Always drop the previous auto rows first — that makes this idempotent and
@@ -214,6 +254,8 @@ def sync_stock_items_to_expenses(doc):
 			)
 
 		row.is_stock_item = item.is_stock_item
+		if not row.expense_date:
+			row.expense_date = doc.posting_date or frappe.utils.nowdate()
 		if not row.uom:
 			row.uom = item.stock_uom
 		if not row.expense_account:
@@ -225,22 +267,27 @@ def sync_stock_items_to_expenses(doc):
 
 		row.amount = flt(flt(row.qty) * flt(row.rate), row.precision("amount"))
 		total += row.amount
-		by_account.setdefault((row.expense_account, row.cost_center), 0.0)
-		by_account[(row.expense_account, row.cost_center)] += row.amount
+		# Every part of the key is coerced to a string so the sort below cannot trip
+		# over a None (cost center can legitimately be empty on a company with none).
+		key = (row.expense_account or "", row.cost_center or "", str(row.expense_date or ""))
+		by_account.setdefault(key, 0.0)
+		by_account[key] += row.amount
 
 	doc.custom_total_stock_amount = flt(total, doc.precision("custom_total_stock_amount"))
 
-	for (account, cost_center), amount in by_account.items():
+	for (account, cost_center, expense_date), amount in sorted(by_account.items()):
 		if not flt(amount):
 			continue
 		doc.append(
 			"expenses",
 			{
-				"expense_date": doc.posting_date or frappe.utils.nowdate(),
+				"expense_date": expense_date or None,
 				"expense_type": STOCK_TYPE,
-				"default_account": account,
-				"cost_center": cost_center,
-				"description": _("Items purchased by employee — see Purchased Items table"),
+				"default_account": account or None,
+				"cost_center": cost_center or None,
+				"description": _(
+					"Items purchased by employee on {0} — see Purchased Items table"
+				).format(frappe.utils.formatdate(expense_date) if expense_date else ""),
 				"amount": amount,
 				"sanctioned_amount": amount,
 				# The row aggregates several items into one account, so a real Qty
@@ -280,7 +327,41 @@ def finalize_reimbursement_fields(doc, method=None):
 	set_expense_type_summary(doc)
 	set_approval_date(doc)
 	set_reimbursement_status(doc)
+	warn_if_approver_cannot_approve(doc)
 	validate_mileage_rate(doc, hard=False)
+
+
+def warn_if_approver_cannot_approve(doc):
+	"""Say so on save if the chosen approver will not be able to approve.
+
+	``approval_status`` is a permlevel 1 field on Expense Claim. Frappe does not
+	refuse a permlevel write it disallows — it silently RESETS the value on save.
+	So an approver whose roles have no permlevel-1 write access clicks Approve, the
+	status quietly reverts to Draft, and the submit then fails with "Approval Status
+	must be 'Approved' or 'Rejected'" — an error that says nothing about roles. The
+	workflow's transitions are already limited to the roles that work; this catches
+	the other half, someone being named as approver who cannot act.
+
+	A warning, not a block: naming the approver and granting them the role are two
+	different people's jobs, and a claim should still be savable in between.
+	"""
+	approver = doc.get("custom_approver") or doc.get("expense_approver")
+	if not approver or doc.docstatus != 0:
+		return
+
+	roles = set(frappe.get_roles(approver))
+	if roles & set(APPROVER_ROLES):
+		return
+
+	frappe.msgprint(
+		_(
+			"{0} does not have the <b>{1}</b> role, so the <b>Approve</b> and "
+			"<b>Reject</b> actions will not appear for them on this claim.<br><br>"
+			"Tick that role on their User record, or name someone who already has it."
+		).format(frappe.bold(approver), ", ".join(APPROVER_ROLES)),
+		title=_("Approver Cannot Approve"),
+		indicator="orange",
+	)
 
 
 def validate_mileage_rate(doc, hard=False):
@@ -367,12 +448,11 @@ def set_reimbursement_status(doc):
 	/ ``status`` rather than kept as a second source of truth. Nothing here can
 	drift, because nothing here is stored independently.
 
-	Why not a Frappe Workflow: ERPNext's Expense Claim already has its own
-	approval gate — ``on_submit`` hard-throws unless approval_status is Approved
-	or Rejected — so the approver is the one who submits. Layering a Workflow on
-	top means two state machines fighting over the same document, which is a
-	well-known source of stuck claims. This field gives the same visibility with
-	none of that risk.
+	The Draft -> Approved/Rejected -> Paid **Workflow** added later is a second
+	*display* of this same derivation, not a second source: its transitions write
+	the standard ``approval_status`` that this function reads, and its Paid state
+	is stamped from here by ``stamp_workflow_state``. See
+	setup/expense_claim_workflow.py for the full argument.
 	"""
 	if doc.docstatus == 2:
 		doc.custom_reimbursement_status = "Cancelled"
@@ -414,7 +494,17 @@ def validate_receipts(doc, method=None):
 
 	Also the last gate on the mileage rate — a claim whose mileage rows compute to
 	zero must not reach the ledger.
+
+	**A rejection is exempt from both.** ERPNext records a rejection by SUBMITTING
+	the claim with approval_status = Rejected (it zeroes every sanctioned amount, so
+	nothing reaches the ledger). Enforcing receipts on that path would mean a claim
+	could not be turned down precisely because the receipt everyone is waiting for
+	is missing — the approver would have to delete the employee's request instead of
+	answering it.
 	"""
+	if doc.approval_status == "Rejected":
+		return
+
 	validate_mileage_rate(doc, hard=True)
 
 	missing = []
@@ -470,6 +560,46 @@ def sync_claims_from_voucher(doc, method=None):
 			refresh_reimbursement_state(row.reference_name, voucher=doc)
 
 
+def stamp_workflow_state(doc, method=None):
+	"""Keep the Workflow state AND the Reimbursement Status on the standard fields,
+	on submit and on cancel.
+
+	The workflow itself handles the states a person clicks. Two it cannot:
+
+	* **Paid** — nobody approves a payment into existence; it becomes true when the
+	  Salary Slip accrual JE, Journal Entry or Payment Entry that references the
+	  claim is submitted, and HRMS's own handler has already recalculated
+	  ``status`` by then. Also stamped here at submit for an "Is Paid" claim, which
+	  is Paid the moment it is submitted.
+	* **Cancelled** — a claim can be cancelled programmatically (an amend, a script,
+	  a cancelled Stock Entry chain) rather than through the workflow action, and a
+	  cancelled document showing "Approved" as its status is exactly the drift a
+	  workflow is supposed to prevent.
+
+	``custom_reimbursement_status`` is stamped from the same derivation for one
+	specific reason: it is normally filled on ``validate``, and **cancel does not
+	run validate** (``Document._save`` skips ``_validate`` when the action is
+	cancel). Without this, a cancelled claim kept reading "Approved" in the list
+	the payroll clerk works from.
+
+	Written with ``db_set``: the document is submitted or cancelled, so a normal
+	save would be refused, and both values are derived — there is nothing here for
+	validation to protect.
+	"""
+	state = derive_state(
+		{"docstatus": doc.docstatus, "approval_status": doc.approval_status, "status": doc.status}
+	)
+
+	if doc.get(STATE_FIELD) != state:
+		doc.db_set(STATE_FIELD, state, update_modified=False)
+
+	# The two vocabularies agree on everything a submitted or cancelled claim can
+	# be (Approved / Rejected / Paid / Cancelled); they differ only on a draft,
+	# which is "Requested" to the client and never reaches this function.
+	if doc.get("custom_reimbursement_status") != state:
+		doc.db_set("custom_reimbursement_status", state, update_modified=False)
+
+
 def refresh_reimbursement_state(claim_name, voucher=None):
 	"""Re-derive status / paid date / paying slip on an already-submitted claim.
 
@@ -494,7 +624,9 @@ def refresh_reimbursement_state(claim_name, voucher=None):
 	else:
 		status = "Approved"
 
-	values = {"custom_reimbursement_status": status}
+	# The workflow state says the same thing in the words the client asked for, and
+	# this is where Paid arrives (and leaves again, if the payment is cancelled).
+	values = {"custom_reimbursement_status": status, STATE_FIELD: derive_state(claim)}
 
 	if status == "Paid":
 		if not claim.custom_paid_date:
@@ -587,6 +719,13 @@ def post_stock_entry(doc, method=None):
 	"""Receive the employee-purchased stock items into the warehouse."""
 	if doc.get("custom_stock_entry"):
 		return  # idempotent re-submit guard
+
+	# A rejection is also a submit (ERPNext's way of recording one), and it zeroes
+	# every sanctioned amount — so there is nothing owed and nothing was bought on
+	# the company's behalf. Receiving the goods anyway would put stock on the books
+	# that no payable ever balances.
+	if doc.approval_status == "Rejected":
+		return
 
 	stock_rows = [r for r in (doc.get("custom_stock_items") or []) if r.is_stock_item and flt(r.qty)]
 	if not stock_rows:

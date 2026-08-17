@@ -42,9 +42,13 @@ fixtures = [
 #   Items table into the standard Expenses table, so the claim total / GL /
 #   payable include it.
 # validate: derive the Requested/Approved/Paid status, the expense-type summary
-#   and the approval date.
+#   and the approval date; warn if the named approver holds no role that can
+#   actually approve (approval_status is permlevel 1).
 # before_submit: block a claim with a missing receipt (per Expense Claim Type).
-# on_submit / on_cancel: post / cancel the Material Receipt Stock Entry.
+# on_submit / on_cancel: post / cancel the Material Receipt Stock Entry, then put
+#   the Workflow state back in step with the standard fields — the Draft ->
+#   Approved/Rejected -> Paid workflow lives in setup/expense_claim_workflow.py and
+#   Paid/Cancelled are stamped, never clicked.
 #
 # Salary Slip "Reimbursements" tab: approved claims are selected there and paid
 #   out with the wages. apply_reimbursements adds the total to NET pay only —
@@ -70,8 +74,16 @@ doc_events = {
 		"before_validate": "ls_foods.reimbursement.sync_reimbursement_rows",
 		"validate": "ls_foods.reimbursement.finalize_reimbursement_fields",
 		"before_submit": "ls_foods.reimbursement.validate_receipts",
-		"on_submit": "ls_foods.reimbursement.post_stock_entry",
-		"on_cancel": "ls_foods.reimbursement.cancel_stock_entry",
+		"on_submit": [
+			"ls_foods.reimbursement.post_stock_entry",
+			# LAST: HRMS's own on_submit has recalculated status by now, and an
+			# "Is Paid" claim is Paid the moment it is submitted.
+			"ls_foods.reimbursement.stamp_workflow_state",
+		],
+		"on_cancel": [
+			"ls_foods.reimbursement.cancel_stock_entry",
+			"ls_foods.reimbursement.stamp_workflow_state",
+		],
 	},
 	# HRMS already recalculates an Expense Claim's reimbursed amount and standard
 	# status from any voucher that references it. These carry that through to the
@@ -98,6 +110,13 @@ after_install = [
 	"ls_foods.setup.payroll_setup.run",
 	"ls_foods.setup.hr_settings.run",
 	"ls_foods.setup.reimbursement_setup.run",
+]
+
+# Re-applies the Expense Claim field properties that the fixture import would
+# otherwise revert (fixtures import AFTER patches on migrate) and rebuilds the
+# Draft -> Approved/Rejected -> Paid workflow from code.
+after_migrate = [
+	"ls_foods.setup.reimbursement_setup.after_migrate",
 ]
 
 # Each item in the list will be shown as an app in the apps page
