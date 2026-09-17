@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-09-17 09:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "email_id",
+  "is_primary",
+  "custom_current",
+  "custom_notes"
+ ],
+ "fields": [
+  {
+   "columns": 4,
+   "fieldname": "email_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Email",
+   "options": "Email",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "description": "Exactly one row may be primary. It becomes the Contact's - and therefore the Customer's - email address.",
+   "fieldname": "is_primary",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Primary"
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "description": "Still in use. Untick instead of deleting the row.",
+   "fieldname": "custom_current",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Current"
+  },
+  {
+   "columns": 4,
+   "fieldname": "custom_notes",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-17 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ls Foods",
+ "name": "Customer Email Entry",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

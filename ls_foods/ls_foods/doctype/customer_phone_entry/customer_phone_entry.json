@@ -1,0 +1,80 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-09-17 09:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "phone",
+  "custom_ext",
+  "is_primary_phone",
+  "custom_current",
+  "custom_notify",
+  "custom_notes"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Phone",
+   "options": "Phone",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "custom_ext",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Ext"
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "description": "Exactly one row may be primary. It becomes the Contact's - and therefore the Customer's - phone and mobile number.",
+   "fieldname": "is_primary_phone",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Primary"
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "description": "Still in use. Untick instead of deleting the row.",
+   "fieldname": "custom_current",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Current"
+  },
+  {
+   "columns": 2,
+   "fieldname": "custom_notify",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Notify",
+   "options": "\nText\nCall\nEmail"
+  },
+  {
+   "columns": 2,
+   "fieldname": "custom_notes",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-17 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ls Foods",
+ "name": "Customer Phone Entry",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

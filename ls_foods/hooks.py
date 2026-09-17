@@ -99,6 +99,52 @@ doc_events = {
 		"on_cancel": "ls_foods.reimbursement.sync_claims_from_voucher",
 		"on_update_after_submit": "ls_foods.reimbursement.sync_claims_from_voucher",
 	},
+	# Customer master — see ls_foods/customer_master.py for the full rationale.
+	# before_insert: fill custom_customer_id when it is blank (1043 -> 1044).
+	#   before_insert, not validate, so a Data Import carrying the legacy number
+	#   keeps it.
+	# validate: reject a duplicate Customer ID with a readable message, supply
+	#   Country / Address Type on the address rows, and hold the phone and email
+	#   grids to Contact's one-primary rule before Contact throws its own.
+	# on_update: push the three grids out to the real Address and Contact
+	#   records. on_update, not validate, because their Dynamic Link cannot be
+	#   validated against a Customer that is not in the database yet.
+	"Customer": {
+		"before_insert": "ls_foods.customer_master.set_customer_id",
+		"validate": "ls_foods.customer_master.prepare_customer_master",
+		"on_update": "ls_foods.customer_master.sync_addresses_and_contact",
+	},
+	# The other direction: an edit made on the Address or Contact form itself
+	# comes back into the grid, so the customer's next save cannot push stale
+	# values over newer ones. frappe.flags breaks the loop between the two.
+	"Address": {
+		"on_update": "ls_foods.customer_master.pull_address_into_customers",
+		"on_trash": "ls_foods.customer_master.drop_address_from_customers",
+	},
+	"Contact": {
+		"on_update": "ls_foods.customer_master.pull_contact_into_customers",
+	},
+	# Case pricing and weight — see ls_foods/case_pricing.py.
+	# Items are stocked and sold in Cases — the stock unit IS the case, so there
+	#   are no UOM conversions anywhere and "Case Weight (lb)" is just the pounds
+	#   in one case, typed per line. See ls_foods/case_pricing.py.
+	# validate: fill Unit Price (rate / case weight) — the only figure ERPNext
+	#   cannot hold, because with the case as the stock unit its "Rate of Stock
+	#   UOM" is the case price over again; and warn (never block) on a line with
+	#   no case weight.
+	# before_submit: refuse an unpriced row. An item with only a Case Item Price
+	#   sold in its own Stock UOM silently prices at 0.00 — verified on the bench.
+	"Sales Invoice": {
+		# before_validate: copy Case Weight (lb) into the standard weight_per_unit
+		#   BEFORE the controller runs, so ERPNext's own maths produces Line
+		#   Weight and Total Weight (lb). Nothing here recalculates them.
+		"before_validate": "ls_foods.case_pricing.mirror_case_weight",
+		"validate": [
+			"ls_foods.case_pricing.set_unit_price",
+			"ls_foods.case_pricing.warn_missing_case_weight",
+		],
+		"before_submit": "ls_foods.case_pricing.validate_zero_rate",
+	},
 }
 
 # Installation
@@ -110,6 +156,8 @@ after_install = [
 	"ls_foods.setup.payroll_setup.run",
 	"ls_foods.setup.hr_settings.run",
 	"ls_foods.setup.reimbursement_setup.run",
+	"ls_foods.setup.customer_setup.install",
+	"ls_foods.setup.case_pricing_setup.run",
 ]
 
 # Re-applies the Expense Claim field properties that the fixture import would
@@ -117,6 +165,12 @@ after_install = [
 # Draft -> Approved/Rejected -> Paid workflow from code.
 after_migrate = [
 	"ls_foods.setup.reimbursement_setup.after_migrate",
+	# Idempotent. Runs on every migrate so the Property Setters and the print
+	# format are re-applied from code — a patch only ever runs once, and the
+	# Print Format record in the database is what actually renders, so without
+	# this a change to templates/sales_invoice_case_weight.html would never
+	# reach a deployed site.
+	"ls_foods.setup.case_pricing_setup.run",
 ]
 
 # Each item in the list will be shown as an app in the apps page
@@ -155,6 +209,8 @@ after_migrate = [
 doctype_js = {
 	"Salary Slip": "public/js/payment_entry.js",
 	"Expense Claim": "public/js/expense_claim.js",
+	"Customer": "public/js/customer.js",
+	"Sales Invoice": "public/js/sales_invoice.js",
 }
 doctype_list_js = {"Expense Claim": "public/js/expense_claim_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}

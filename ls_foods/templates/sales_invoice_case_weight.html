@@ -1,0 +1,173 @@
+{#-
+  LS Foods — Sales Invoice.
+
+  Shows, per line, the case price, the unit price and the case weight, and a
+  Total Weight (lb) at the foot beside the money totals.
+
+  Items are stocked and sold in Cases, so there are no UOM conversions anywhere:
+  Qty is cases, Rate is the price of a case, and custom_case_weight is simply the
+  pounds in one case — typed on the line, so a heavy or light shipment prints its
+  real weight.
+
+  doc.total_net_weight is print_hide = 1 on the standard doctype and would never
+  reach a PDF unless printed explicitly. Sales Invoice has NO document-level
+  Weight UOM field (nor does Delivery Note), which is why "lb" is written into
+  the label rather than read from a field. Every item carries Weight UOM = Lb,
+  so the total is already in pounds.
+-#}
+<style>
+  .ls-inv { font-size: 9pt; }
+  .ls-inv table { width: 100%; border-collapse: collapse; }
+  .ls-inv .items th, .ls-inv .items td { border: 1px solid #c8ccd0; padding: 4px 6px; }
+  .ls-inv .items th { background: #f4f5f6; text-align: left; font-weight: 600; }
+  .ls-inv .num { text-align: right; white-space: nowrap; }
+  .ls-inv .head td { border: 0; padding: 0 0 2px 0; vertical-align: top; }
+  .ls-inv .totals td { padding: 3px 6px; border: 0; }
+  .ls-inv .totals .grand td { border-top: 1.5px solid #333; font-weight: 700; font-size: 10pt; }
+  .ls-inv .weight-box { border: 1px solid #c8ccd0; padding: 6px 8px; background: #f4f5f6; }
+  .ls-inv .muted { color: #6b7075; }
+</style>
+
+<div class="ls-inv">
+
+  <table class="head">
+    <tr>
+      <td style="width:60%">
+        <div style="font-size:13pt;font-weight:700">{{ doc.company }}</div>
+        {% set addr = doc.company_address_display or "" %}
+        {% if addr %}<div class="muted">{{ addr }}</div>{% endif %}
+      </td>
+      <td style="width:40%" class="num">
+        <div style="font-size:13pt;font-weight:700">
+          {{ _("Credit Note") if doc.is_return else _("Invoice") }}
+        </div>
+        <div>{{ doc.name }}</div>
+        <div class="muted">{{ frappe.format(doc.posting_date, {"fieldtype": "Date"}) }}</div>
+        {% if doc.po_no %}<div class="muted">{{ _("PO") }}: {{ doc.po_no }}</div>{% endif %}
+      </td>
+    </tr>
+  </table>
+
+  <table class="head" style="margin-top:10px">
+    <tr>
+      <td style="width:50%">
+        <div style="font-weight:600">{{ _("Bill To") }}</div>
+        <div>{{ doc.customer_name }}</div>
+        {% if doc.address_display %}<div class="muted">{{ doc.address_display }}</div>{% endif %}
+      </td>
+      <td style="width:50%">
+        {% if doc.shipping_address %}
+          <div style="font-weight:600">{{ _("Ship To") }}</div>
+          <div class="muted">{{ doc.shipping_address }}</div>
+        {% endif %}
+      </td>
+    </tr>
+  </table>
+
+  <table class="items" style="margin-top:12px">
+    <thead>
+      <tr>
+        <th style="width:26px">#</th>
+        <th>{{ _("Item") }}</th>
+        <th class="num" style="width:52px">{{ _("Qty") }}</th>
+        <th style="width:48px">{{ _("UOM") }}</th>
+        <th class="num" style="width:70px">{{ _("Case Wt (lb)") }}</th>
+        <th class="num" style="width:74px">{{ _("Unit Price") }}</th>
+        <th class="num" style="width:70px">{{ _("Weight (lb)") }}</th>
+        <th class="num" style="width:78px">{{ _("Case Price") }}</th>
+        <th class="num" style="width:86px">{{ _("Amount") }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {%- for row in doc.items %}
+      <tr>
+        <td>{{ row.idx }}</td>
+        <td>
+          <div>{{ row.item_name }}</div>
+          {%- if row.item_code != row.item_name %}
+          <div class="muted" style="font-size:8pt">{{ row.item_code }}</div>
+          {%- endif %}
+        </td>
+        <td class="num">{{ frappe.format(row.qty, {"fieldtype": "Float"}) }}</td>
+        <td>{{ row.uom }}</td>
+        <td class="num">
+          {%- if row.custom_case_weight -%}
+            {{ frappe.format(row.custom_case_weight, {"fieldtype": "Float"}) }}
+          {%- else -%}&ndash;{%- endif -%}
+        </td>
+        <td class="num">
+          {%- if row.custom_unit_price -%}
+            {{ frappe.format_value(row.custom_unit_price, {"fieldtype": "Currency"}, doc) }}
+            <span class="muted" style="font-size:7.5pt">/lb</span>
+          {%- else -%}&ndash;{%- endif -%}
+        </td>
+        <td class="num">
+          {%- if row.total_weight -%}
+            {{ frappe.format(row.total_weight, {"fieldtype": "Float"}) }}
+          {%- else -%}&ndash;{%- endif -%}
+        </td>
+        <td class="num">{{ frappe.format_value(row.rate, {"fieldtype": "Currency"}, doc) }}</td>
+        <td class="num">{{ frappe.format_value(row.amount, {"fieldtype": "Currency"}, doc) }}</td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+
+  <table style="margin-top:12px">
+    <tr>
+      <td style="width:46%;vertical-align:top">
+        <div class="weight-box">
+          <table>
+            <tr>
+              <td>{{ _("Total Cases / Qty") }}</td>
+              <td class="num">{{ frappe.format(doc.total_qty, {"fieldtype": "Float"}) }}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700">{{ _("Total Weight (lb)") }}</td>
+              <td class="num" style="font-weight:700">
+                {{ frappe.format(doc.total_net_weight, {"fieldtype": "Float"}) }}
+              </td>
+            </tr>
+          </table>
+        </div>
+      </td>
+      <td style="width:8%"></td>
+      <td style="width:46%;vertical-align:top">
+        <table class="totals">
+          <tr>
+            <td>{{ _("Net Total") }}</td>
+            <td class="num">{{ frappe.format_value(doc.net_total, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- for tax in doc.taxes %}
+          {%- if tax.tax_amount %}
+          <tr>
+            <td>{{ tax.description }}</td>
+            <td class="num">{{ frappe.format_value(tax.tax_amount, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- endif %}
+          {%- endfor %}
+          {%- if doc.discount_amount %}
+          <tr>
+            <td>{{ _("Discount") }}</td>
+            <td class="num">-{{ frappe.format_value(doc.discount_amount, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- endif %}
+          <tr class="grand">
+            <td>{{ _("Grand Total") }}</td>
+            <td class="num">{{ frappe.format_value(doc.grand_total, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- if doc.outstanding_amount and not doc.is_return %}
+          <tr>
+            <td>{{ _("Outstanding") }}</td>
+            <td class="num">{{ frappe.format_value(doc.outstanding_amount, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- endif %}
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  {%- if doc.terms %}
+  <div style="margin-top:14px" class="muted">{{ doc.terms }}</div>
+  {%- endif %}
+</div>
