@@ -53,18 +53,24 @@ from ls_foods.case_pricing import (
 	ALLOW_ZERO_RATE_FIELD,
 	CASE_WEIGHT_FIELD,
 	NATIVE_WEIGHT_FIELD,
+	PER_LB_PRICE_LIST,
+	PRICED_PER_LB_FIELD,
 	UNIT_PRICE_FIELD,
 )
+from ls_foods.share_billing import PROCESSING_ITEM_FIELD, SHARE_ITEM_FIELD
+from ls_foods.share_deposit import DEPOSIT_DUE_FIELD
 
 MODULE = "Ls Foods"
 CASE_UOM = "Case"
 
-PRINT_FORMAT = "LS Foods Invoice"
-TEMPLATE = os.path.join(
-	os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-	"templates",
-	"sales_invoice_case_weight.html",
-)
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
+
+# (print format, doctype, template file). The Sales Order format lays shares out
+# like the client's item build sheet; see ls_foods/share_billing.py.
+PRINT_FORMATS = [
+	("LS Foods Invoice", "Sales Invoice", "sales_invoice_case_weight.html"),
+	("LS Foods Order", "Sales Order", "sales_order_share.html"),
+]
 
 CASE_WEIGHT_LABEL = "Case Weight (lb)"
 CASE_WEIGHT_HELP = (
@@ -73,8 +79,71 @@ CASE_WEIGHT_HELP = (
 	"and the invoice's Total Weight (lb). It never changes the price."
 )
 
+PER_LB_ROW_FLAG = {
+	"fieldname": PRICED_PER_LB_FIELD,
+	"label": "Priced per lb",
+	"fieldtype": "Check",
+	"insert_after": "item_code",
+	"read_only": 1,
+	"hidden": 1,
+	"print_hide": 1,
+	"module": MODULE,
+}
+
 CUSTOM_FIELDS = {
+	"Item": [
+		{
+			"fieldname": PRICED_PER_LB_FIELD,
+			"label": "Beef / hog share",
+			"fieldtype": "Check",
+			"insert_after": "weight_uom",
+			"description": (
+				"A quarter/half/whole beef or hog. The order charges its Standard Selling "
+				"price (the fixed deposit); the invoice charges hanging weight x its "
+				"Per Pound price, adds the processing line and deducts the deposit."
+			),
+			"module": MODULE,
+		},
+		{
+			"fieldname": PROCESSING_ITEM_FIELD,
+			"label": "Processing item",
+			"fieldtype": "Link",
+			"options": "Item",
+			"insert_after": PRICED_PER_LB_FIELD,
+			"depends_on": f"eval:doc.{PRICED_PER_LB_FIELD}",
+			"description": (
+				"Fee line added under this share on the final invoice: "
+				"hanging weight x the fee's price per lb (e.g. Processing Fee)."
+			),
+			"module": MODULE,
+		},
+	],
+	"Sales Order": [
+		{
+			"fieldname": DEPOSIT_DUE_FIELD,
+			"label": "Deposit Due",
+			"fieldtype": "Currency",
+			"options": "currency",
+			"insert_after": "in_words",
+			"read_only": 1,
+			"depends_on": f"eval:doc.{DEPOSIT_DUE_FIELD}",
+			"description": "The share lines (fixed deposit per quarter/half/whole). Compare with Advance Paid below.",
+			"module": MODULE,
+		},
+	],
 	"Sales Invoice Item": [
+		PER_LB_ROW_FLAG,
+		{
+			"fieldname": SHARE_ITEM_FIELD,
+			"label": "Processing for share",
+			"fieldtype": "Link",
+			"options": "Item",
+			"insert_after": PRICED_PER_LB_FIELD,
+			"read_only": 1,
+			"print_hide": 1,
+			"description": "Set on the processing line added automatically under a beef/hog share.",
+			"module": MODULE,
+		},
 		{
 			"fieldname": CASE_WEIGHT_FIELD,
 			"label": CASE_WEIGHT_LABEL,
@@ -98,7 +167,8 @@ CUSTOM_FIELDS = {
 			"print_hide": 0,
 			"description": (
 				"What one pound works out to on this line — Rate divided by Case Weight. "
-				"Recalculates when the case weight is changed."
+				"On beef/hog shares it is the item's price per lb, and "
+				"Rate = Unit Price x Case Weight."
 			),
 			"module": MODULE,
 		}
@@ -120,6 +190,18 @@ CUSTOM_FIELDS = {
 		}
 	],
 }
+
+# Fields from an earlier design (deposit typed on the item; order priced by
+# weight). The client confirmed the deposit is the share's fixed price-list
+# price and the order is NOT priced by weight, so these go.
+OBSOLETE_FIELDS = [
+	# $/lb moved from the Item into Item Price ("Per Pound" price list), 2026-09-26.
+	"Item-custom_price_per_lb",
+	"Item-custom_share_deposit",
+	"Sales Order Item-custom_share_deposit",
+	"Sales Order Item-custom_unit_price",
+	"Sales Order Item-custom_priced_per_lb",
+]
 
 # (doctype, fieldname, property, type, value)
 PROPERTY_SETTERS = [
@@ -158,15 +240,54 @@ PROPERTY_SETTERS = [
 
 def run():
 	_ensure_case_uom()
+	_ensure_per_lb_price_list()
+	for name in OBSOLETE_FIELDS:
+		if frappe.db.exists("Custom Field", name):
+			frappe.delete_doc("Custom Field", name, ignore_permissions=True)
 	create_custom_fields(CUSTOM_FIELDS, ignore_validate=True)
+	# create_custom_fields only inserts, so a property changed on an existing
+	# field has to be written directly. Unit Price is read-only on every line:
+	# on shares it is the item's price per lb, never typed.
+	frappe.db.set_value(
+		"Custom Field",
+		f"Sales Invoice Item-{UNIT_PRICE_FIELD}",
+		{"read_only": 1, "read_only_depends_on": None},
+	)
 
 	for doctype, fieldname, prop, proptype, value in PROPERTY_SETTERS:
 		make_property_setter(doctype, fieldname, prop, value, proptype, for_doctype=False)
 
 	install_print_format()
 
-	for doctype in ("Sales Invoice", "Sales Invoice Item", "Sales Order Item", "Delivery Note Item"):
+	for doctype in (
+		"Item",
+		"Sales Order",
+		"Sales Order Item",
+		"Sales Invoice",
+		"Sales Invoice Item",
+		"Delivery Note Item",
+	):
 		frappe.clear_cache(doctype=doctype)
+
+
+def _ensure_per_lb_price_list():
+	"""The selling price list that holds each item's $/lb (flyer PER LB. column).
+
+	Never used as a transaction's price list — ls_foods reads it directly
+	(``case_pricing.price_per_lb``) and multiplies by the line's weight.
+	"""
+	if frappe.db.exists("Price List", PER_LB_PRICE_LIST):
+		return
+	currency = frappe.db.get_value("Price List", "Standard Selling", "currency") or "USD"
+	frappe.get_doc(
+		{
+			"doctype": "Price List",
+			"price_list_name": PER_LB_PRICE_LIST,
+			"currency": currency,
+			"selling": 1,
+			"enabled": 1,
+		}
+	).insert(ignore_permissions=True)
 
 
 def _ensure_case_uom():
@@ -187,32 +308,33 @@ def _ensure_case_uom():
 
 
 def install_print_format():
-	"""Push ``templates/sales_invoice_case_weight.html`` into the Print Format record.
+	"""Push each ``templates/*.html`` into its Print Format record.
 
 	The database record is what actually renders — editing the template file
 	alone changes nothing on screen. Keeping the file as the source of truth and
 	pushing it from here means the format is versioned in git and re-applied by
 	every migrate, instead of living only in the database.
 	"""
-	with open(TEMPLATE) as f:
-		html = f.read()
+	for name, doctype, template in PRINT_FORMATS:
+		with open(os.path.join(TEMPLATES_DIR, template)) as f:
+			html = f.read()
 
-	if frappe.db.exists("Print Format", PRINT_FORMAT):
-		frappe.db.set_value("Print Format", PRINT_FORMAT, {"html": html, "disabled": 0})
-		return
+		if frappe.db.exists("Print Format", name):
+			frappe.db.set_value("Print Format", name, {"html": html, "disabled": 0})
+			continue
 
-	frappe.get_doc(
-		{
-			"doctype": "Print Format",
-			"name": PRINT_FORMAT,
-			"doc_type": "Sales Invoice",
-			"module": MODULE,
-			"standard": "No",
-			"custom_format": 1,
-			"print_format_type": "Jinja",
-			"font_size": 9,
-			"margin_top": 12,
-			"margin_bottom": 12,
-			"html": html,
-		}
-	).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Print Format",
+				"name": name,
+				"doc_type": doctype,
+				"module": MODULE,
+				"standard": "No",
+				"custom_format": 1,
+				"print_format_type": "Jinja",
+				"font_size": 9,
+				"margin_top": 12,
+				"margin_bottom": 12,
+				"html": html,
+			}
+		).insert(ignore_permissions=True)

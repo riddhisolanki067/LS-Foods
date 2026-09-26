@@ -1,0 +1,137 @@
+{#-
+  LS Foods — Sales Order.
+
+  Laid out like the client's item build sheet ("SALES ORDER SCREEN"): a beef /
+  hog share prints as its deposit line — e.g. "Quarter Beef Deposit 4 x $600" for
+  a whole beef — because on the order the share IS priced at its fixed deposit
+  (share_billing.py). The hanging-weight charge and processing come on the final
+  invoice. Other items print with their case weight and price.
+-#}
+{%- set view = order_view(doc) %}
+<style>
+  .ls-so { font-size: 9pt; }
+  .ls-so table { width: 100%; border-collapse: collapse; }
+  .ls-so .items th, .ls-so .items td { border: 1px solid #c8ccd0; padding: 4px 6px; }
+  .ls-so .items th { background: #f4f5f6; text-align: left; font-weight: 600; }
+  .ls-so .num { text-align: right; white-space: nowrap; }
+  .ls-so .head td { border: 0; padding: 0 0 2px 0; vertical-align: top; }
+  .ls-so .totals td { padding: 3px 6px; border: 0; }
+  .ls-so .totals .grand td { border-top: 1.5px solid #333; font-weight: 700; font-size: 10pt; }
+  .ls-so .muted { color: #6b7075; }
+</style>
+
+<div class="ls-so">
+
+  <table class="head">
+    <tr>
+      <td style="width:60%">
+        <div style="font-size:13pt;font-weight:700">{{ doc.company }}</div>
+        {% if doc.company_address_display %}<div class="muted">{{ doc.company_address_display }}</div>{% endif %}
+      </td>
+      <td style="width:40%" class="num">
+        <div style="font-size:13pt;font-weight:700">{{ _("Sales Order") }}</div>
+        <div>{{ doc.name }}</div>
+        <div class="muted">{{ frappe.format(doc.transaction_date, {"fieldtype": "Date"}) }}</div>
+      </td>
+    </tr>
+  </table>
+
+  <table class="head" style="margin-top:10px">
+    <tr>
+      <td>
+        <div style="font-weight:600">{{ _("Customer") }}</div>
+        <div>{{ doc.customer_name }}</div>
+        {% if doc.address_display %}<div class="muted">{{ doc.address_display }}</div>{% endif %}
+      </td>
+    </tr>
+  </table>
+
+  <table class="items" style="margin-top:12px">
+    <thead>
+      <tr>
+        <th style="width:26px">#</th>
+        <th>{{ _("Item") }}</th>
+        <th class="num" style="width:60px">{{ _("Qty") }}</th>
+        <th style="width:60px">{{ _("Unit") }}</th>
+        <th class="num" style="width:80px">{{ _("Price") }}</th>
+        <th class="num" style="width:90px">{{ _("Amount") }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {%- set n = namespace(i=0) %}
+      {%- for s in view.shares %}
+      {%- set n.i = n.i + 1 %}
+      <tr>
+        <td>{{ n.i }}</td>
+        <td>
+          <div>{{ _(s.deposit_label) }}</div>
+          <div class="muted" style="font-size:8pt">{{ s.row.item_name }} &mdash; {{ _("balance billed at delivery by hanging weight, plus processing") }}</div>
+        </td>
+        <td class="num">{{ frappe.format(s.deposit_units, {"fieldtype": "Float"}) }}</td>
+        <td></td>
+        <td class="num">{{ frappe.format_value(s.deposit_each, {"fieldtype": "Currency"}, doc) }}</td>
+        <td class="num">{{ frappe.format_value(s.row.amount, {"fieldtype": "Currency"}, doc) }}</td>
+      </tr>
+      {%- endfor %}
+      {%- for row in view.others %}
+      {%- set n.i = n.i + 1 %}
+      {%- set lbs = row.qty * (row.weight_per_unit or 0) %}
+      <tr>
+        <td>{{ n.i }}</td>
+        <td>
+          <div>{{ row.item_name }}</div>
+          {%- if lbs %}<div class="muted" style="font-size:8pt">{{ frappe.format(row.qty, {"fieldtype": "Float"}) }} {{ row.uom }} &times; {{ frappe.format(row.weight_per_unit, {"fieldtype": "Float"}) }} lb &mdash; {{ _("case price") }} {{ frappe.format_value(row.rate, {"fieldtype": "Currency"}, doc) }}</div>{% endif %}
+        </td>
+        {%- if lbs %}
+        <td class="num">{{ frappe.format(lbs, {"fieldtype": "Float"}) }}</td>
+        <td>{{ _("Pounds") }}</td>
+        <td class="num">{{ frappe.format_value(row.amount / lbs, {"fieldtype": "Currency"}, doc) }}</td>
+        {%- else %}
+        <td class="num">{{ frappe.format(row.qty, {"fieldtype": "Float"}) }}</td>
+        <td>{{ row.uom }}</td>
+        <td class="num">{{ frappe.format_value(row.rate, {"fieldtype": "Currency"}, doc) }}</td>
+        {%- endif %}
+        <td class="num">{{ frappe.format_value(row.amount, {"fieldtype": "Currency"}, doc) }}</td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+
+  <table style="margin-top:12px">
+    <tr>
+      <td style="width:50%"></td>
+      <td style="width:50%">
+        <table class="totals">
+          {%- if view.shares %}
+          <tr>
+            <td style="font-weight:700">{{ _("Deposit Due Now") }}</td>
+            <td class="num" style="font-weight:700">{{ frappe.format_value(view.deposits, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- if doc.advance_paid %}
+          <tr>
+            <td>{{ _("Deposit Paid") }}</td>
+            <td class="num">{{ frappe.format_value(doc.advance_paid, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- endif %}
+          {%- endif %}
+          {%- if view.others %}
+          <tr>
+            <td>{{ _("Other Items") }}</td>
+            <td class="num">{{ frappe.format_value(view.others_total, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- endif %}
+          {%- for tax in doc.taxes %}{%- if tax.tax_amount %}
+          <tr>
+            <td>{{ tax.description }}</td>
+            <td class="num">{{ frappe.format_value(tax.tax_amount, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- endif %}{%- endfor %}
+          <tr class="grand">
+            <td>{{ _("Total Due") }}</td>
+            <td class="num">{{ frappe.format_value(doc.grand_total, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>

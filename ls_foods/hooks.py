@@ -138,12 +138,26 @@ doc_events = {
 		# before_validate: copy Case Weight (lb) into the standard weight_per_unit
 		#   BEFORE the controller runs, so ERPNext's own maths produces Line
 		#   Weight and Total Weight (lb). Nothing here recalculates them.
-		"before_validate": "ls_foods.case_pricing.mirror_case_weight",
+		#   Then price per-lb items (beef shares): Rate = Unit Price x Case Weight,
+		#   and keep one processing line (weight x fee) under each share.
+		#   See ls_foods/share_billing.py.
+		"before_validate": [
+			"ls_foods.case_pricing.mirror_case_weight",
+			"ls_foods.case_pricing.apply_per_lb_pricing",
+			"ls_foods.share_billing.sync_processing_rows",
+		],
 		"validate": [
 			"ls_foods.case_pricing.set_unit_price",
 			"ls_foods.case_pricing.warn_missing_case_weight",
 		],
 		"before_submit": "ls_foods.case_pricing.validate_zero_rate",
+	},
+	# Sales Order: items with a Per Pound price are priced $/lb x case weight
+	#   (estimated weight until invoiced). A beef/hog share stays at its price-list
+	#   price — the FIXED deposit — and Deposit Due totals those lines.
+	"Sales Order": {
+		"before_validate": "ls_foods.case_pricing.apply_per_lb_pricing",
+		"validate": "ls_foods.share_deposit.set_deposit_due",
 	},
 }
 
@@ -210,7 +224,8 @@ doctype_js = {
 	"Salary Slip": "public/js/payment_entry.js",
 	"Expense Claim": "public/js/expense_claim.js",
 	"Customer": "public/js/customer.js",
-	"Sales Invoice": "public/js/sales_invoice.js",
+	"Sales Invoice": ["public/js/per_lb_pricing.js", "public/js/sales_invoice.js"],
+	"Sales Order": ["public/js/per_lb_pricing.js", "public/js/sales_order.js"],
 }
 doctype_list_js = {"Expense Claim": "public/js/expense_claim_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -242,6 +257,13 @@ doctype_list_js = {"Expense Claim": "public/js/expense_claim_list.js"}
 # ----------
 
 # add methods and filters to jinja environment
+# Print formats lay beef/hog shares out like the client's item build sheet.
+jinja = {
+	"methods": [
+		"ls_foods.share_billing.invoice_view",
+		"ls_foods.share_billing.order_view",
+	],
+}
 # jinja = {
 # 	"methods": "ls_foods.utils.jinja_methods",
 # 	"filters": "ls_foods.utils.jinja_filters"

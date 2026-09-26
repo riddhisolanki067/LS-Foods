@@ -59,11 +59,16 @@ corrupts the invoice total.
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt
+from frappe.utils import cint, flt, getdate, nowdate
 
 CASE_WEIGHT_FIELD = "custom_case_weight"
 UNIT_PRICE_FIELD = "custom_unit_price"
 ALLOW_ZERO_RATE_FIELD = "custom_allow_zero_rate"
+
+# Item flag for beef/hog shares (fixed deposit on the order, hanging weight on
+# the invoice). The $/lb itself is an Item Price in the "Per Pound" price list.
+PRICED_PER_LB_FIELD = "custom_priced_per_lb"
+PER_LB_PRICE_LIST = "Per Pound"
 
 NATIVE_WEIGHT_FIELD = "weight_per_unit"
 
@@ -88,6 +93,134 @@ def mirror_case_weight(doc, method=None):
 			row.set(NATIVE_WEIGHT_FIELD, typed)
 
 
+def price_per_lb(item_code, customer=None, on_date=None):
+	"""The item's $/lb from the **Per Pound** price list, or 0 if it has none.
+
+	The client keeps two prices per item, both as ordinary Item Prices loaded by
+	Data Import:
+
+	    Standard Selling  the case price (flyer PRICE column) — and, for a beef/hog
+	                      share, its fixed DEPOSIT ($600 / $1,200 / $2,400)
+	    Per Pound         the $/lb (flyer PER LB. column)
+
+	The Per Pound price is stored in the item's own stock UOM (Case) and the list
+	*name* says it is per pound: an Item Price in UOM "Pound" is refused unless
+	Pound is in the item's UOM table with a FIXED lb-per-case factor
+	(item_price.py), and these cases vary in weight.
+
+	A customer-specific Per Pound price wins over the general one; validity dates
+	are honoured.
+	"""
+	if not item_code:
+		return 0.0
+	cache_key = ("ls_foods_price_per_lb", item_code, customer or "", str(on_date or ""))
+	cached = frappe.local.cache.get(cache_key) if hasattr(frappe.local, "cache") else None
+	if cached is not None:
+		return cached
+
+	on_date = getdate(on_date or nowdate())
+	rows = frappe.get_all(
+		"Item Price",
+		filters={"price_list": PER_LB_PRICE_LIST, "item_code": item_code, "selling": 1},
+		fields=["price_list_rate", "customer", "valid_from", "valid_upto"],
+		order_by="valid_from desc, creation desc",
+	)
+	rows = [
+		r
+		for r in rows
+		if (not r.customer or r.customer == customer)
+		and (not r.valid_from or getdate(r.valid_from) <= on_date)
+		and (not r.valid_upto or getdate(r.valid_upto) >= on_date)
+	]
+	rows.sort(key=lambda r: 0 if r.customer else 1)
+	price = flt(rows[0].price_list_rate) if rows else 0.0
+	if hasattr(frappe.local, "cache"):
+		frappe.local.cache[cache_key] = price
+	return price
+
+
+def is_share(item_code):
+	"""Beef/hog share: ordered at a fixed deposit, invoiced by hanging weight."""
+	return cint(frappe.get_cached_value("Item", item_code, PRICED_PER_LB_FIELD)) if item_code else 0
+
+
+def _line_weight(row):
+	"""Pounds in ONE unit on this line: typed case/hanging weight, else nominal."""
+	return (
+		flt(row.get(CASE_WEIGHT_FIELD))
+		or flt(row.get(NATIVE_WEIGHT_FIELD))
+		or flt(frappe.get_cached_value("Item", row.item_code, NATIVE_WEIGHT_FIELD))
+	)
+
+
+def apply_per_lb_pricing(doc, method=None):
+	"""``before_validate`` (Sales Order + Sales Invoice) — Rate = $/lb x weight.
+
+	For every line whose item has a **Per Pound** price:
+
+	    Unit Price ($/lb)  = the Per Pound price — read-only, never typed
+	    Case Weight (lb)   = weight of ONE unit (a case, or a share's hanging
+	                         weight); falls back to the item's nominal weight
+	    Rate (case price)  = Unit Price x Case Weight
+	    Amount             = Qty x Rate
+
+	so a heavy or light case is charged for what it actually weighs (client's
+	rule, 2026-09-26). Lines with no Per Pound price keep the case price from
+	Standard Selling, and Unit Price is then derived (:func:`set_unit_price`).
+
+	One exception: a beef/hog **share on a Sales Order** stays at its Standard
+	Selling price, which is the fixed deposit — the weight is not known yet. The
+	invoice made from that order re-prices it here by hanging weight, and the
+	deposit comes off as the advance (share_billing.py).
+
+	With no weight at all the line is left alone at its case price, and
+	:func:`warn_missing_case_weight` says so.
+
+	Runs before the controller, which keeps a row's own price_list_rate and rate
+	(it only fills them when empty), so ERPNext's totals follow.
+	"""
+	is_invoice = doc.doctype == "Sales Invoice"
+	on_date = doc.get("posting_date") or doc.get("transaction_date")
+	for row in doc.get("items") or []:
+		if not row.item_code:
+			continue
+		share = is_share(row.item_code)
+		if row.meta.has_field(PRICED_PER_LB_FIELD):
+			row.set(PRICED_PER_LB_FIELD, share)
+		if share and not is_invoice:
+			continue
+
+		per_lb = price_per_lb(row.item_code, doc.get("customer"), on_date)
+		if not per_lb:
+			continue
+
+		weight = _line_weight(row)
+		if row.meta.has_field(CASE_WEIGHT_FIELD) and not flt(row.get(CASE_WEIGHT_FIELD)):
+			row.set(CASE_WEIGHT_FIELD, weight)
+		if weight:
+			row.set(NATIVE_WEIGHT_FIELD, weight)
+		if row.meta.has_field(UNIT_PRICE_FIELD):
+			row.set(UNIT_PRICE_FIELD, per_lb)
+		if not weight:
+			continue
+
+		price = flt(per_lb * weight, row.precision("price_list_rate"))
+		row.price_list_rate = price
+		row.rate = flt(price * (1 - flt(row.discount_percentage) / 100), row.precision("rate"))
+
+
+@frappe.whitelist()
+def get_per_lb_prices(item_codes, customer=None, on_date=None):
+	"""For the form: {item_code: {"per_lb": $/lb, "share": 0/1}} for items with a Per Pound price."""
+	codes = frappe.parse_json(item_codes) if isinstance(item_codes, str) else item_codes
+	out = {}
+	for code in set(codes or []):
+		per_lb = price_per_lb(code, customer, on_date)
+		if per_lb or is_share(code):
+			out[code] = {"per_lb": per_lb, "share": is_share(code)}
+	return out
+
+
 def set_unit_price(doc, method=None):
 	"""``validate`` — fill Unit Price: what one pound works out to on this line.
 
@@ -110,6 +243,10 @@ def set_unit_price(doc, method=None):
 		if not flt(row.get(CASE_WEIGHT_FIELD)):
 			row.set(CASE_WEIGHT_FIELD, flt(row.get(NATIVE_WEIGHT_FIELD)))
 
+		# Lines priced from the Per Pound list already carry Unit Price.
+		if price_per_lb(row.item_code, doc.get("customer"), doc.get("posting_date")):
+			continue
+
 		case_weight = flt(row.get(CASE_WEIGHT_FIELD))
 
 		row.set(
@@ -127,9 +264,17 @@ def warn_missing_case_weight(doc, method=None):
 	Price column stays blank. That is almost always an item whose nominal weight
 	was never filled in — a data gap, not an accounting error, so it does not
 	stop the invoice going out.
+
+	Non-stock lines are skipped: a charge such as the per-lb Beef Processing
+	Fee carries no weight of its own — giving it one would count the same
+	pounds twice in Total Weight (lb).
 	"""
 	missing = [
-		row for row in (doc.get("items") or []) if flt(row.qty) and not flt(row.get(CASE_WEIGHT_FIELD))
+		row
+		for row in (doc.get("items") or [])
+		if flt(row.qty)
+		and not flt(row.get(CASE_WEIGHT_FIELD))
+		and cint(frappe.get_cached_value("Item", row.item_code, "is_stock_item"))
 	]
 	if not missing:
 		return
