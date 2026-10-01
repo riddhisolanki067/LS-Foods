@@ -331,6 +331,12 @@ jinja = {
 # override_doctype_class = {
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
+# Sales Order: only validate_delivery_date is replaced, so an order can be saved
+# with no Delivery Date. See ls_foods/overrides/sales_order.py for why this
+# cannot be a Property Setter or a doc_events hook.
+override_doctype_class = {
+	"Sales Order": "ls_foods.overrides.sales_order.LSFoodsSalesOrder",
+}
 
 # Document Events
 # ---------------
