@@ -8,8 +8,8 @@
 // The server (ls_foods/case_pricing.py apply_per_lb_pricing) applies the same
 // rule on every save; this file only keeps the form live while typing.
 //
-// weight_field: custom_case_weight on the invoice, weight_per_unit (labelled
-// "Case Weight (lb)") on the order.
+// weight_field: custom_case_weight ("Case Weight (lb)") on both the invoice and
+// the order.
 
 window.ls_foods_per_lb = {
 	// {item_code: {per_lb, share}} for the items on this form that have one.

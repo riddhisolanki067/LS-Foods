@@ -128,9 +128,22 @@ def set_customer_id(doc, method=None):
 	legacy number keeps it, and so the value is settled before anything else
 	reads it. ``doc.name`` does not exist yet at this point — nothing here
 	needs it.
+
+	An ID with **no digit in it** is not an ID. Customers are named by this
+	field (``autoname = field:custom_customer_id``), and when a user types a
+	name into a Customer link field and picks "Create a new Customer", Frappe
+	drops the typed text into the naming field (``create_new.js``, "set the name
+	if called from a link field"). Left alone, "Vernon" becomes both the
+	Customer ID and the record name. So that text is handed to Customer Name
+	when that is still empty, and the record is numbered as if the ID had come
+	in blank. Every real scheme — 1043, 001043, A-1043 — carries a digit.
 	"""
-	if cstr(doc.get(CUSTOMER_ID_FIELD)).strip():
+	value = cstr(doc.get(CUSTOMER_ID_FIELD)).strip()
+	if value and re.search(r"\d", value):
 		return
+
+	if value and not cstr(doc.get("customer_name")).strip():
+		doc.customer_name = value
 
 	doc.set(CUSTOMER_ID_FIELD, next_customer_id())
 

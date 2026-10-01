@@ -1,4 +1,4 @@
-"""LS Foods — setup for case pricing and weight on the Sales Invoice.
+"""LS Foods — setup for case pricing and weight on the Sales Invoice and Sales Order.
 
 Items are stocked and sold in **Cases**. Nearly everything the client asked for
 is already in ERPNext under names that do not look like what they are, so most
@@ -34,6 +34,9 @@ set deliberately and comes to exactly 11:
 
     idx 1 + item_code 2 + qty 1 + case weight 1 + unit price 1
           + line weight 1 + rate 1 + amount 2  =  10, + uom 1 = 11
+
+Sales Order Item gets the identical layout (2026-10-01), so the two documents
+are keyed the same way.
 
 ``warehouse`` and ``uom`` come out where needed to make room — every item sells
 in its own stock UOM here, so the UOM column repeats "Case" on every line and
@@ -77,6 +80,12 @@ CASE_WEIGHT_HELP = (
 	"Actual pounds in one case for this shipment. Defaults to the item's nominal "
 	"weight — type over it with the weighed figure. Drives Unit Price, Line Weight "
 	"and the invoice's Total Weight (lb). It never changes the price."
+)
+
+ORDER_CASE_WEIGHT_HELP = (
+	"Pounds in one case on this order. Defaults to the item's nominal weight — type "
+	"over it with the expected or weighed figure. Drives Line Weight and Total Weight "
+	"(lb); on an item with a Per Pound price, Rate = Unit Price x Case Weight."
 )
 
 PER_LB_ROW_FLAG = {
@@ -128,6 +137,39 @@ CUSTOM_FIELDS = {
 			"read_only": 1,
 			"depends_on": f"eval:doc.{DEPOSIT_DUE_FIELD}",
 			"description": "The share lines (fixed deposit per quarter/half/whole). Compare with Advance Paid below.",
+			"module": MODULE,
+		},
+	],
+	# The same two columns as the invoice, in the same place, so an order is
+	# keyed exactly like the invoice made from it — and, sharing fieldnames, the
+	# typed weight carries across when the invoice is created from the order.
+	"Sales Order Item": [
+		{
+			"fieldname": CASE_WEIGHT_FIELD,
+			"label": CASE_WEIGHT_LABEL,
+			"fieldtype": "Float",
+			"insert_after": "stock_qty",
+			"in_list_view": 1,
+			"columns": 1,
+			"print_hide": 0,
+			"description": ORDER_CASE_WEIGHT_HELP,
+			"module": MODULE,
+		},
+		{
+			"fieldname": UNIT_PRICE_FIELD,
+			"label": "Unit Price",
+			"fieldtype": "Currency",
+			"options": "currency",
+			"insert_after": CASE_WEIGHT_FIELD,
+			"read_only": 1,
+			"in_list_view": 1,
+			"columns": 1,
+			"print_hide": 0,
+			"description": (
+				"What one pound works out to on this line — the item's Per Pound price, "
+				"or Rate divided by Case Weight. Blank on a beef/hog share: the order "
+				"charges its fixed deposit, not a price per lb."
+			),
 			"module": MODULE,
 		},
 	],
@@ -199,7 +241,6 @@ OBSOLETE_FIELDS = [
 	"Item-custom_price_per_lb",
 	"Item-custom_share_deposit",
 	"Sales Order Item-custom_share_deposit",
-	"Sales Order Item-custom_unit_price",
 	"Sales Order Item-custom_priced_per_lb",
 ]
 
@@ -212,10 +253,14 @@ PROPERTY_SETTERS = [
 	# Out of the grid: it holds the same number as the Case Weight column and
 	# would render as a duplicate (and blow the 11-column budget).
 	("Sales Invoice Item", NATIVE_WEIGHT_FIELD, "in_list_view", "Check", 0),
-	# Sales Order Item and Delivery Note Item already allow it to be typed
-	# directly, and have room for it in their own grids.
-	("Sales Order Item", NATIVE_WEIGHT_FIELD, "label", "Data", CASE_WEIGHT_LABEL),
+	# Delivery Note Item already allows it to be typed directly.
 	("Delivery Note Item", NATIVE_WEIGHT_FIELD, "label", "Data", CASE_WEIGHT_LABEL),
+	# Sales Order Item: same treatment as the invoice. Read-only because the
+	# standard field is editable here, and two boxes for one number would let
+	# them disagree — Case Weight (lb) is the one that is typed.
+	("Sales Order Item", NATIVE_WEIGHT_FIELD, "label", "Data", "Case Weight (lb) — applied"),
+	("Sales Order Item", NATIVE_WEIGHT_FIELD, "in_list_view", "Check", 0),
+	("Sales Order Item", NATIVE_WEIGHT_FIELD, "read_only", "Check", 1),
 	# --- the line weight -----------------------------------------------------
 	("Sales Invoice Item", "total_weight", "label", "Data", "Line Weight (lb)"),
 	("Sales Invoice Item", "total_weight", "in_list_view", "Check", 1),
@@ -231,6 +276,23 @@ PROPERTY_SETTERS = [
 	("Sales Invoice Item", "warehouse", "in_list_view", "Check", 0),
 	("Sales Invoice Item", "stock_qty", "in_list_view", "Check", 0),
 	("Sales Invoice Item", "stock_uom_rate", "in_list_view", "Check", 0),
+	# --- Sales Order Item: the invoice's grid, column for column ---------------
+	# Ships at 13 of the 11 units (item 3, delivery date 2, qty 1, rate 2,
+	# amount 2, warehouse 2 + idx). Delivery Date and Source Warehouse leave the
+	# grid — both are filled from the order header and stay in the row's
+	# expanded form for the odd line that differs.
+	("Sales Order Item", "total_weight", "label", "Data", "Line Weight (lb)"),
+	("Sales Order Item", "total_weight", "in_list_view", "Check", 1),
+	("Sales Order Item", "total_weight", "columns", "Int", 1),
+	("Sales Order Item", "total_weight", "print_hide", "Check", 0),
+	("Sales Order Item", "item_code", "columns", "Int", 2),
+	("Sales Order Item", "qty", "columns", "Int", 1),
+	("Sales Order Item", "uom", "columns", "Int", 1),
+	("Sales Order Item", "uom", "in_list_view", "Check", 1),
+	("Sales Order Item", "rate", "columns", "Int", 1),
+	("Sales Order Item", "amount", "columns", "Int", 2),
+	("Sales Order Item", "delivery_date", "in_list_view", "Check", 0),
+	("Sales Order Item", "warehouse", "in_list_view", "Check", 0),
 	# --- the document total --------------------------------------------------
 	("Sales Invoice", "total_net_weight", "label", "Data", "Total Weight (lb)"),
 	("Sales Order", "total_net_weight", "label", "Data", "Total Weight (lb)"),

@@ -1,4 +1,4 @@
-"""LS Foods — case pricing and weight on the Sales Invoice.
+"""LS Foods — case pricing and weight on the Sales Invoice and Sales Order.
 
 The model
 ---------
@@ -50,6 +50,11 @@ wins. It does not. The value forced back comes from
 and ``args`` is ``item.as_dict()`` — the row. A line carrying a weight keeps it;
 a blank line gets the item's nominal weight as its default. Verified on a saved
 invoice rather than assumed.
+
+The Sales Order carries the same columns and the same hooks (2026-10-01):
+``custom_case_weight`` / ``custom_unit_price`` exist on Sales Order Item under
+the same fieldnames, so the weight typed on an order maps onto the invoice made
+from it. "Invoice" below reads "order" just as well.
 
 ⚠ The rule the weight total rests on: **every item must have Weight UOM = Lb**.
 ``calculate_total_net_weight`` (``taxes_and_totals.py:665``) adds the lines'
@@ -222,7 +227,7 @@ def get_per_lb_prices(item_codes, customer=None, on_date=None):
 
 
 def set_unit_price(doc, method=None):
-	"""``validate`` — fill Unit Price: what one pound works out to on this line.
+	"""``validate`` (Sales Order + Sales Invoice) — fill Unit Price: what one pound works out to on this line.
 
 	``Rate / Case Weight``. This is the only figure ERPNext cannot supply: with
 	the case as the stock unit, the standard "Rate of Stock UOM" is just the case
@@ -235,6 +240,8 @@ def set_unit_price(doc, method=None):
 	not in :func:`mirror_case_weight`. ``sales_invoice.js`` keeps the same figure
 	live while the user is typing.
 	"""
+	is_order = doc.doctype == "Sales Order"
+	on_date = doc.get("posting_date") or doc.get("transaction_date")
 	for row in doc.get("items") or []:
 		# Nothing typed: show the item's nominal case weight, so the operator can
 		# see the default being accepted instead of an empty box. It is only a
@@ -243,8 +250,14 @@ def set_unit_price(doc, method=None):
 		if not flt(row.get(CASE_WEIGHT_FIELD)):
 			row.set(CASE_WEIGHT_FIELD, flt(row.get(NATIVE_WEIGHT_FIELD)))
 
+		# A share on an order is charged its fixed deposit; deposit / weight is
+		# not a price per lb, so the column stays empty until it is invoiced.
+		if is_order and is_share(row.item_code):
+			row.set(UNIT_PRICE_FIELD, 0.0)
+			continue
+
 		# Lines priced from the Per Pound list already carry Unit Price.
-		if price_per_lb(row.item_code, doc.get("customer"), doc.get("posting_date")):
+		if price_per_lb(row.item_code, doc.get("customer"), on_date):
 			continue
 
 		case_weight = flt(row.get(CASE_WEIGHT_FIELD))

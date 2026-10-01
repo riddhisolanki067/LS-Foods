@@ -10,3 +10,4 @@ ls_foods.patches.v0_0_3.setup_reimbursement_requests
 ls_foods.patches.v0_0_5.expense_claim_workflow
 ls_foods.patches.v0_0_6.setup_customer_master
 ls_foods.patches.v0_0_7.setup_case_pricing
+ls_foods.patches.v0_0_8.sales_order_case_weight

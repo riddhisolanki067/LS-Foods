@@ -155,9 +155,18 @@ doc_events = {
 	# Sales Order: items with a Per Pound price are priced $/lb x case weight
 	#   (estimated weight until invoiced). A beef/hog share stays at its price-list
 	#   price — the FIXED deposit — and Deposit Due totals those lines.
+	#   The item grid matches the invoice's — Case Weight (lb), Unit Price, Line
+	#   Weight (lb) — so the same weight and unit-price hooks run here.
 	"Sales Order": {
-		"before_validate": "ls_foods.case_pricing.apply_per_lb_pricing",
-		"validate": "ls_foods.share_deposit.set_deposit_due",
+		"before_validate": [
+			"ls_foods.case_pricing.mirror_case_weight",
+			"ls_foods.case_pricing.apply_per_lb_pricing",
+		],
+		"validate": [
+			"ls_foods.case_pricing.set_unit_price",
+			"ls_foods.case_pricing.warn_missing_case_weight",
+			"ls_foods.share_deposit.set_deposit_due",
+		],
 	},
 }
 
