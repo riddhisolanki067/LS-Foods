@@ -59,6 +59,9 @@
         </div>
         <div>{{ doc.name }}</div>
         <div class="muted">{{ frappe.format(doc.posting_date, {"fieldtype": "Date"}) }}</div>
+        {#- Sales Invoice has no header link to its order; each item row carries it. #}
+        {%- set sales_orders = doc.items | map(attribute="sales_order") | select | unique | join(", ") %}
+        {% if sales_orders %}<div class="muted">{{ _("Sales Order") }}: {{ sales_orders }}</div>{% endif %}
         {% if doc.po_no %}<div class="muted">{{ _("PO") }}: {{ doc.po_no }}</div>{% endif %}
       </td>
     </tr>
