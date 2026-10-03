@@ -10,6 +10,7 @@
   "city",
   "state",
   "pincode",
+  "custom_primary",
   "custom_mailing",
   "custom_delivery",
   "custom_current",
@@ -42,10 +43,8 @@
    "reqd": 1
   },
   {
-   "columns": 1,
    "fieldname": "state",
    "fieldtype": "Data",
-   "in_list_view": 1,
    "label": "State"
   },
   {
@@ -54,6 +53,15 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Zip"
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "fieldname": "custom_primary",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Primary",
+   "description": "The customer's billing address. Only one row can be Primary."
   },
   {
    "columns": 1,
@@ -67,7 +75,7 @@
   {
    "columns": 1,
    "default": "0",
-   "description": "Goods are delivered here.",
+   "description": "Goods are delivered here. Ticked without Primary, the address is a Shipping address.",
    "fieldname": "custom_delivery",
    "fieldtype": "Check",
    "in_list_view": 1,
@@ -108,12 +116,13 @@
   },
   {
    "default": "Billing",
-   "description": "What ERPNext calls this address on transactions. Filled automatically from the Mailing / Delivery ticks when left blank.",
+   "description": "Set on save from the ticks: Shipping when Delivery is ticked and Primary is not, otherwise Billing.",
    "fieldname": "address_type",
    "fieldtype": "Select",
    "label": "Address Type",
    "options": "Billing\nShipping\nOffice\nPersonal\nPlant\nPostal\nShop\nSubsidiary\nWarehouse\nCurrent\nPermanent\nOther",
-   "reqd": 1
+   "reqd": 1,
+   "read_only": 1
   },
   {
    "fieldname": "column_break_details",
@@ -150,7 +159,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-09-17 09:00:00.000000",
+ "modified": "2026-10-03 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ls Foods",
  "name": "Customer Address Entry",

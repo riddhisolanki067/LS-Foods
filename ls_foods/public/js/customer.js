@@ -5,7 +5,9 @@
 //
 //   * a button to pull Addresses and the Contact into the grids, for a customer
 //     whose details were entered on those forms rather than here, and
-//   * a plain-language hint on the Customer ID, which fills itself on save.
+//   * a plain-language hint on the Customer ID, which fills itself on save, and
+//   * the address grid's ticks behaving as they will on save: one Primary row
+//     (the billing address), and Address Type following Primary / Delivery.
 
 frappe.ui.form.on("Customer", {
 	refresh(frm) {
@@ -44,3 +46,33 @@ frappe.ui.form.on("Customer", {
 		);
 	},
 });
+
+// Primary is the billing address — ticking it on one row unticks the others.
+// Address Type mirrors the server's rule (customer_master._address_type):
+// Shipping when Delivery is ticked and Primary is not, otherwise Billing.
+frappe.ui.form.on("Customer Address Entry", {
+	custom_primary(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (row.custom_primary) {
+			(frm.doc.custom_addresses || []).forEach((other) => {
+				if (other.name !== row.name && other.custom_primary) {
+					frappe.model.set_value(other.doctype, other.name, "custom_primary", 0);
+				}
+			});
+		}
+		ls_foods_set_address_type(cdt, cdn);
+	},
+	custom_delivery(frm, cdt, cdn) {
+		ls_foods_set_address_type(cdt, cdn);
+	},
+	custom_addresses_add(frm, cdt, cdn) {
+		ls_foods_set_address_type(cdt, cdn);
+	},
+});
+
+function ls_foods_set_address_type(cdt, cdn) {
+	const row = locals[cdt][cdn];
+	if (!row) return;
+	const type = row.custom_delivery && !row.custom_primary ? "Shipping" : "Billing";
+	if (row.address_type !== type) frappe.model.set_value(cdt, cdn, "address_type", type);
+}
