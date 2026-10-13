@@ -61,7 +61,8 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Primary",
-   "description": "The customer's billing address. Only one row can be Primary."
+   "description": "Set automatically: the first address ticked Mailing and Current. It is the customer's Primary (billing) address.",
+   "read_only": 1
   },
   {
    "columns": 1,
@@ -75,7 +76,7 @@
   {
    "columns": 1,
    "default": "0",
-   "description": "Goods are delivered here. Ticked without Primary, the address is a Shipping address.",
+   "description": "Goods are delivered here. Ticked without Mailing, the address is a Shipping address.",
    "fieldname": "custom_delivery",
    "fieldtype": "Check",
    "in_list_view": 1,
@@ -116,7 +117,7 @@
   },
   {
    "default": "Billing",
-   "description": "Set on save from the ticks: Shipping when Delivery is ticked and Primary is not, otherwise Billing.",
+   "description": "Set on save from the ticks: Shipping when Delivery is ticked and Mailing is not, otherwise Billing.",
    "fieldname": "address_type",
    "fieldtype": "Select",
    "label": "Address Type",
@@ -159,7 +160,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-10-03 12:00:00.000000",
+ "modified": "2026-10-14 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ls Foods",
  "name": "Customer Address Entry",

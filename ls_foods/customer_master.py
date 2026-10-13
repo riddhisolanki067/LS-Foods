@@ -113,8 +113,8 @@ EMAIL_MAP = {
 	"custom_notes": "custom_notes",
 }
 
-# Read back from the Address only. Going out, Primary is applied by
-# _set_preferred_addresses, which leaves billing alone when no row is ticked.
+# Derived, never typed: the first Current + Mailing row (see _primary_row).
+# Going out it is applied by _set_preferred_addresses.
 PRIMARY_FIELD = "custom_primary"
 PRIMARY_TARGET = "is_primary_address"
 
@@ -157,7 +157,6 @@ def prepare_customer_master(doc, method=None):
 	"""``validate`` on Customer — tidy and check everything the form collects."""
 	validate_customer_id(doc)
 	_fill_address_defaults(doc)
-	_check_one_primary_address(doc)
 	_adopt_existing_contact(doc)
 	_check_grid(doc, PHONE_TABLE, "phone", "is_primary_phone", _("phone number"))
 	_check_grid(doc, EMAIL_TABLE, "email_id", "is_primary", _("email address"))
@@ -313,17 +312,23 @@ def _fill_address_defaults(doc):
 	"""Supply the two fields Address insists on but the legacy screen has no
 	column for: Country and Address Type.
 
-	Address Type follows the ticks, every save (client's rule, 2026-10-03):
-	**Shipping** when Delivery is ticked and Primary is not; otherwise
-	**Billing** — Primary alone, Primary + Delivery, or neither. It is derived,
-	not typed, so the Address record can never disagree with the grid.
+	Address Type and Primary follow the ticks, every save (client's rule,
+	2026-10-14). They are derived, not typed, so the Address record can never
+	disagree with the grid:
+
+	  * Mailing + Current            -> Primary address, Billing
+	  * Mailing + Current, no Delivery -> Billing
+	  * Delivery + Current, no Mailing -> Shipping
 	"""
 	country = _default_country()
+	rows = doc.get(ADDRESS_TABLE) or []
+	primary = _primary_row(rows)
 
-	for row in doc.get(ADDRESS_TABLE) or []:
+	for row in rows:
 		if not row.country:
 			row.country = country
 		row.address_type = _address_type(row)
+		row.set(PRIMARY_FIELD, 1 if row is primary else 0)
 
 
 def _address_row_values(address):
@@ -335,19 +340,18 @@ def _address_row_values(address):
 
 
 def _address_type(row):
-	return "Shipping" if cint(row.custom_delivery) and not cint(row.get(PRIMARY_FIELD)) else "Billing"
+	"""Shipping only when Delivery is ticked without Mailing; Billing otherwise
+	(Mailing with or without Delivery, and a row with neither tick)."""
+	return "Shipping" if cint(row.custom_delivery) and not cint(row.custom_mailing) else "Billing"
 
 
-def _check_one_primary_address(doc):
-	"""Primary = the customer's billing address, so there can only be one."""
-	primaries = [row for row in (doc.get(ADDRESS_TABLE) or []) if cint(row.get(PRIMARY_FIELD))]
-	if len(primaries) > 1 and not frappe.flags.get(SYNC_FLAG):
-		frappe.throw(
-			_("Only one address can be marked Primary (rows {0}).").format(
-				", ".join(str(row.idx) for row in primaries)
-			),
-			title=_("Billing address"),
-		)
+def _primary_row(rows):
+	"""The first Mailing + Current row is the Primary (billing) address. A second
+	one is still a Billing address, just not the Primary."""
+	return next(
+		(row for row in sorted(rows, key=lambda r: cint(r.idx)) if cint(row.custom_mailing) and cint(row.custom_current)),
+		None,
+	)
 
 
 def _adopt_existing_contact(doc):
@@ -501,18 +505,26 @@ def _retire_unlisted_addresses(customer, kept):
 def _set_preferred_addresses(customer):
 	"""Let the grid drive the address ERPNext puts on transactions.
 
-	Rule: the row ticked **Primary** is the billing address — the customer's
-	Primary Address, and the Address's "Preferred Billing Address". The first
-	*current* row ticked **Delivery** is the preferred shipping address (the
-	first ticked one if none is current). The same address can be both.
-	With no row ticked Primary the billing side is left exactly as it is: the
-	Primary column arrived after the customers were loaded, and an untouched
-	customer must not lose the billing address it already has just by being
-	saved. Billing changes only when a row is ticked.
+	Rule: the first **Mailing + Current** row is the Primary address — the
+	customer's Primary Address and the Address's "Preferred Billing Address".
+	The preferred shipping address is the first Current row that is a Shipping
+	address (Delivery without Mailing); failing that, the first Current row
+	ticked Delivery, so a Primary that is also delivered to ships there too.
+	With no Mailing + Current row the billing side is left exactly as it is,
+	so a customer whose ticks are incomplete does not lose its billing address
+	just by being saved.
 	"""
 	rows = [row for row in (customer.get(ADDRESS_TABLE) or []) if row.address]
-	billing = _preferred(rows, PRIMARY_FIELD)
-	shipping = _preferred(rows, "custom_delivery")
+	primary = _primary_row(rows)
+	billing = primary.address if primary else None
+	shipping = _preferred(rows, "Shipping") or _preferred(rows, None)
+
+	# keep the grid's Primary column in step on paths that skip validate
+	for row in rows:
+		flag = 1 if row is primary else 0
+		if cint(row.get(PRIMARY_FIELD)) != flag:
+			frappe.db.set_value(ADDRESS_ENTRY, row.name, PRIMARY_FIELD, flag, update_modified=False)
+			row.set(PRIMARY_FIELD, flag)
 
 	for name in _linked_addresses(customer.name):
 		values = {"is_shipping_address": 1 if name == shipping else 0}
@@ -532,12 +544,15 @@ def _set_preferred_addresses(customer):
 		)
 
 
-def _preferred(rows, fieldname):
-	ticked = [row for row in rows if cint(row.get(fieldname))]
-	current = [row for row in ticked if cint(row.custom_current)]
-	chosen = current or ticked
-
-	return chosen[0].address if chosen else None
+def _preferred(rows, address_type):
+	"""First Current row ticked Delivery (of that Address Type, if given)."""
+	for row in sorted(rows, key=lambda r: cint(r.idx)):
+		if not (cint(row.custom_current) and cint(row.custom_delivery)):
+			continue
+		if address_type and _address_type(row) != address_type:
+			continue
+		return row.address
+	return None
 
 
 def _push_contact(customer):
@@ -644,17 +659,8 @@ def pull_address_into_customers(doc, method=None):
 			)
 
 			values = _address_row_values(doc)
-
-			# Ticked Preferred Billing here: Frappe has already unticked the
-			# customer's other addresses; the grid follows.
-			if cint(doc.is_primary_address):
-				frappe.db.set_value(
-					ADDRESS_ENTRY,
-					{"parenttype": "Customer", "parent": link.link_name, "address": ("!=", doc.name)},
-					PRIMARY_FIELD,
-					0,
-					update_modified=False,
-				)
+			# Primary is re-derived from the ticks below, not taken from the form
+			values.pop(PRIMARY_FIELD)
 
 			if row:
 				frappe.db.set_value(ADDRESS_ENTRY, row, values, update_modified=False)

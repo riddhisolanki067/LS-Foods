@@ -47,32 +47,25 @@ frappe.ui.form.on("Customer", {
 	},
 });
 
-// Primary is the billing address — ticking it on one row unticks the others.
-// Address Type mirrors the server's rule (customer_master._address_type):
-// Shipping when Delivery is ticked and Primary is not, otherwise Billing.
+// Primary and Address Type follow the ticks — mirrors the server's rule
+// (customer_master._primary_row / _address_type):
+//   Mailing + Current           -> the first such row is Primary, Billing
+//   Delivery + Current, no Mailing -> Shipping
 frappe.ui.form.on("Customer Address Entry", {
-	custom_primary(frm, cdt, cdn) {
-		const row = locals[cdt][cdn];
-		if (row.custom_primary) {
-			(frm.doc.custom_addresses || []).forEach((other) => {
-				if (other.name !== row.name && other.custom_primary) {
-					frappe.model.set_value(other.doctype, other.name, "custom_primary", 0);
-				}
-			});
-		}
-		ls_foods_set_address_type(cdt, cdn);
-	},
-	custom_delivery(frm, cdt, cdn) {
-		ls_foods_set_address_type(cdt, cdn);
-	},
-	custom_addresses_add(frm, cdt, cdn) {
-		ls_foods_set_address_type(cdt, cdn);
-	},
+	custom_mailing: (frm) => ls_foods_apply_address_rules(frm),
+	custom_delivery: (frm) => ls_foods_apply_address_rules(frm),
+	custom_current: (frm) => ls_foods_apply_address_rules(frm),
+	custom_addresses_add: (frm) => ls_foods_apply_address_rules(frm),
+	custom_addresses_remove: (frm) => ls_foods_apply_address_rules(frm),
 });
 
-function ls_foods_set_address_type(cdt, cdn) {
-	const row = locals[cdt][cdn];
-	if (!row) return;
-	const type = row.custom_delivery && !row.custom_primary ? "Shipping" : "Billing";
-	if (row.address_type !== type) frappe.model.set_value(cdt, cdn, "address_type", type);
+function ls_foods_apply_address_rules(frm) {
+	const rows = (frm.doc.custom_addresses || []).slice().sort((a, b) => a.idx - b.idx);
+	const primary = rows.find((row) => row.custom_mailing && row.custom_current);
+	rows.forEach((row) => {
+		const type = row.custom_delivery && !row.custom_mailing ? "Shipping" : "Billing";
+		if (row.address_type !== type) frappe.model.set_value(row.doctype, row.name, "address_type", type);
+		const flag = row === primary ? 1 : 0;
+		if (cint(row.custom_primary) !== flag) frappe.model.set_value(row.doctype, row.name, "custom_primary", flag);
+	});
 }
