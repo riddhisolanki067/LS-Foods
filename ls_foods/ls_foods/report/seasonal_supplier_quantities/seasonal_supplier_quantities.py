@@ -23,8 +23,9 @@ as Total Weight / Quantity for that reason.
 Only items with Maintain Stock ticked are counted — untick it on fee/credit
 items (Processing Fee, FREE …) to keep them off the supplier sheet.
 
-Vendor is deliberately blank for now; get_vendor_map() is the single place the
-vendor rule will go.
+Vendor is the supplier on the item's Purchasing tab (Item Supplier table) —
+one per item by agreement; if a second row slips in, the first row wins.
+Items without one sort last and total under "No Vendor".
 """
 
 import re
@@ -58,7 +59,7 @@ def get_columns():
 		{"label": _("Quantity"), "fieldname": "qty", "fieldtype": "Float", "precision": 2, "width": 90},
 		{"label": _("Weight"), "fieldname": "weight", "fieldtype": "Float", "precision": 2, "width": 90},
 		{"label": _("Total Weight"), "fieldname": "total_weight", "fieldtype": "Float", "precision": 2, "width": 110},
-		{"label": _("Vendor"), "fieldname": "vendor", "fieldtype": "Data", "width": 140},
+		{"label": _("Vendor"), "fieldname": "vendor", "fieldtype": "Link", "options": "Supplier", "width": 160},
 		{"label": _("Sales Order"), "fieldname": "sales_order", "fieldtype": "Data", "width": 260},
 		{"label": _("Pick-Up Location"), "fieldname": "pick_up_location", "fieldtype": "Data", "width": 220},
 	]
@@ -73,9 +74,22 @@ def get_totals_columns():
 	]
 
 
+NO_VENDOR = "No Vendor"
+
+
 def get_vendor_map(item_codes):
-	"""item_code -> vendor name. Empty until the vendor rule is agreed."""
-	return {}
+	"""item_code -> supplier from the item's Suppliers table (first row)."""
+	if not item_codes:
+		return {}
+	vendors = {}
+	for item_code, supplier in frappe.db.sql(
+		"""select parent, supplier from `tabItem Supplier`
+		    where parenttype = 'Item' and parent in %(items)s and ifnull(supplier, '') != ''
+		    order by parent, idx""",
+		{"items": tuple(item_codes)},
+	):
+		vendors.setdefault(item_code, supplier)
+	return vendors
 
 
 def get_lines(filters):
@@ -135,6 +149,7 @@ def get_item_data(filters, view, location=None, lines=None):
 		lines = sorted(
 			lines,
 			key=lambda d: (
+				not d.vendor,
 				d.vendor,
 				d.item_code,
 				d.location_number if d.location_number is not None else 999,
@@ -205,7 +220,7 @@ def group_by_item(lines):
 				"pick_up_location": ", ".join(sorted(g.locations, key=lambda n: g.locations[n] or 0)),
 			}
 		)
-	rows.sort(key=lambda r: (r["vendor"], r["item_code"]))
+	rows.sort(key=lambda r: (not r["vendor"], r["vendor"], r["item_code"]))
 	return rows
 
 
@@ -247,11 +262,13 @@ def get_totals_data(filters, lines=None):
 			locations.append(loc)
 
 	rows = []
-	for vendor in sorted(vendors):
+	for vendor in sorted(vendors, key=lambda v: (not v, v)):
 		block = []
 		for loc in locations:
 			qty, weight = sums.get((vendor, loc), (0.0, 0.0))
-			block.append({"vendor": vendor, "location": loc, "qty": qty, "total_weight": weight})
+			block.append(
+				{"vendor": vendor or _(NO_VENDOR), "location": loc, "qty": qty, "total_weight": weight}
+			)
 		rows.extend(block)
 		rows.append(
 			{
