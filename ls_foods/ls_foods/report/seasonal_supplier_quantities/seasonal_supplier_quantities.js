@@ -32,22 +32,23 @@ frappe.query_reports["Seasonal Supplier Quantities"] = {
 				// a location left over from the Pick-Up view would be hidden but still set
 				if (
 					report.get_filter_value("view") !== "Pick-Up Locations" &&
-					report.get_filter_value("pick_up_location")
+					(report.get_filter_value("pick_up_location") || []).length
 				) {
-					report.set_filter_value("pick_up_location", ""); // refreshes on its own
+					report.set_filter_value("pick_up_location", []); // refreshes on its own
 				} else {
 					report.refresh();
 				}
 			},
 		},
 		{
-			// empty = every pick-up location together; one picked = that location's tab
+			// empty = every pick-up location together; pick one or more to narrow it
 			fieldname: "pick_up_location",
 			label: __("Pick-Up Location"),
-			fieldtype: "Link",
+			fieldtype: "MultiSelectList",
 			options: "Pick-Up Location",
 			depends_on: "eval:doc.view == 'Pick-Up Locations'",
-			get_query: () => ({ filters: { is_home_delivery: 0, disabled: 0 } }),
+			get_data: (txt) =>
+				frappe.db.get_link_options("Pick-Up Location", txt, { is_home_delivery: 0, disabled: 0 }),
 		},
 		{
 			fieldname: "show_order_lines",

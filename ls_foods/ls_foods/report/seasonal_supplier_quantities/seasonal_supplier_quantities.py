@@ -6,10 +6,10 @@
 Replaces the client's "Seasonal Supplier Quantities" workbook, whose tabs were
 the same item list cut different ways. Here each tab is a View:
 
-  All Locations      every submitted order line
+  All Locations      every draft or submitted order line (cancelled left out)
   Pick-Up Locations  orders with a pick-up location that is not Home Delivery
-                     (narrow to one location with the Pick-Up Location filter —
-                     that is the per-location tab of the workbook)
+                     (narrow to one or more locations with the Pick-Up Location
+                     filter — one location is the per-location tab of the workbook)
   Home Delivery      orders whose pick-up location is the Home Delivery one
   Totals             quantity and weight per vendor per location
 
@@ -49,7 +49,15 @@ def execute(filters=None):
 	if view == TOTALS:
 		return get_totals_columns(), get_totals_data(filters)
 
-	return get_columns(), get_item_data(filters, view, filters.pick_up_location)
+	return get_columns(), get_item_data(filters, view, get_location_filter(filters))
+
+
+def get_location_filter(filters):
+	"""The Pick-Up Location filter is a multi-select: a list (or its JSON)."""
+	value = filters.get("pick_up_location")
+	if isinstance(value, str):
+		value = frappe.parse_json(value) if value.startswith("[") else [value]
+	return [v for v in (value or []) if v]
 
 
 def get_columns():
@@ -94,7 +102,8 @@ def get_vendor_map(item_codes):
 
 def get_lines(filters):
 	# fees, FREE rows etc. are kept out by unticking Maintain Stock on the item
-	conditions = ["so.docstatus = 1", "ifnull(item.is_stock_item, 0) = 1"]
+	# drafts count too — orders are often still in draft while the supplier order is placed
+	conditions = ["so.docstatus < 2", "ifnull(item.is_stock_item, 0) = 1"]
 	if filters.company:
 		conditions.append("so.company = %(company)s")
 	if filters.from_date:
@@ -130,20 +139,20 @@ def get_lines(filters):
 	return lines
 
 
-def in_view(line, view, location=None):
+def in_view(line, view, locations=None):
 	if view == HOME:
 		return bool(line.is_home_delivery)
 	if view == PICKUP:
 		if not line.pick_up_location or line.is_home_delivery:
 			return False
-		return not location or line.pick_up_location == location
+		return not locations or line.pick_up_location in locations
 	return True
 
 
-def get_item_data(filters, view, location=None, lines=None):
+def get_item_data(filters, view, locations=None, lines=None):
 	if lines is None:
 		lines = get_lines(filters)
-	lines = [d for d in lines if in_view(d, view, location)]
+	lines = [d for d in lines if in_view(d, view, locations)]
 
 	if filters.show_order_lines:
 		lines = sorted(
@@ -321,7 +330,7 @@ def download_workbook(filters=None):
 	for loc in get_locations():
 		if loc.is_home_delivery:
 			continue
-		add_sheet(sheet_title(loc.name, wb.sheetnames), columns, get_item_data(filters, PICKUP, loc.name, lines=lines))
+		add_sheet(sheet_title(loc.name, wb.sheetnames), columns, get_item_data(filters, PICKUP, [loc.name], lines=lines))
 	add_sheet("Totals", get_totals_columns(), get_totals_data(filters, lines=lines))
 
 	out = BytesIO()
