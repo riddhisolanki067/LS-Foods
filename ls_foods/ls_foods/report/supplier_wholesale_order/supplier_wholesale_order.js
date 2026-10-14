@@ -15,7 +15,6 @@ frappe.query_reports["Supplier Wholesale Order"] = {
 			label: __("Supplier"),
 			fieldtype: "Link",
 			options: "Supplier",
-			reqd: 1,
 		},
 		{
 			fieldname: "from_date",
@@ -40,7 +39,7 @@ frappe.query_reports["Supplier Wholesale Order"] = {
 
 	formatter(value, row, column, data, default_formatter) {
 		value = default_formatter(value, row, column, data);
-		if (data && (data.is_total_row || data.is_label_row)) {
+		if (data && (data.is_total_row || data.is_label_row || data.is_vendor_row)) {
 			value = `<b>${value}</b>`;
 		}
 		return value;

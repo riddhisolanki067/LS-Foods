@@ -9,6 +9,10 @@ stacked in the semi trailer, NOT the flyer's location numbers, so the user
 clicks the locations in the Label Order filter in pallet order (first click =
 Label #1).
 
+Supplier is optional: left empty, every supplier gets its own section (labels
+numbered from #1 per supplier, then a supplier total), items without a supplier
+last under "No Vendor".
+
 A location that has orders for the supplier but was not clicked still gets a
 label, after the clicked ones, so nothing ordered drops off the sheet.
 
@@ -22,6 +26,7 @@ from frappe import _
 from frappe.utils import flt
 
 from ls_foods.ls_foods.report.seasonal_supplier_quantities.seasonal_supplier_quantities import (
+	NO_VENDOR,
 	get_lines,
 	get_location_filter,
 )
@@ -31,8 +36,6 @@ NO_LOCATION = "No Pick-Up Location"
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
-	if not filters.supplier:
-		return get_columns(), []
 	return get_columns(), get_data(filters)
 
 
@@ -79,22 +82,55 @@ def label_title(n, name, location):
 
 
 def get_data(filters):
-	lines = [d for d in get_lines(filters) if d.vendor == filters.supplier]
+	lines = get_lines(filters)
+	if filters.supplier:
+		lines = [d for d in lines if d.vendor == filters.supplier]
 
-	# location -> item_code -> sums
-	groups = {}
+	# vendor -> location -> item_code -> sums
+	vendors = {}
 	for d in lines:
-		items = groups.setdefault(d.pick_up_location or NO_LOCATION, {})
+		items = vendors.setdefault(d.vendor or "", {}).setdefault(d.pick_up_location or NO_LOCATION, {})
 		g = items.get(d.item_code)
 		if not g:
 			g = items[d.item_code] = frappe._dict(item_name=d.item_name, item_code=d.item_code, qty=0, total_weight=0)
 		g.qty += flt(d.qty)
 		g.total_weight += flt(d.total_weight)
 
-	order, locations = get_label_locations(get_location_filter({"pick_up_location": filters.label_order}), groups)
+	picked = get_location_filter({"pick_up_location": filters.label_order})
+	all_vendors = not filters.supplier
 
 	rows = []
 	grand_qty = grand_weight = 0
+	for vendor in sorted(vendors, key=lambda v: (not v, v)):
+		vendor_name = vendor or _(NO_VENDOR)
+		if all_vendors:
+			rows.append({"item_name": vendor_name, "is_vendor_row": 1})
+		qty, weight = add_labels(rows, vendors[vendor], picked)
+		if all_vendors:
+			rows.append(
+				{
+					"item_name": _("{0} TOTAL").format(vendor_name),
+					"qty": qty,
+					"total_weight": flt(weight, 2),
+					"is_total_row": 1,
+				}
+			)
+			rows.append({})
+		grand_qty += qty
+		grand_weight += weight
+
+	if rows:
+		rows.append(
+			{"item_name": _("GRAND TOTAL"), "qty": grand_qty, "total_weight": flt(grand_weight, 2), "is_total_row": 1}
+		)
+	return rows
+
+
+def add_labels(rows, groups, picked):
+	"""One supplier's labels (numbered from #1 for each supplier's truck);
+	returns the supplier's qty and weight."""
+	order, locations = get_label_locations(picked, groups)
+	total_qty = total_weight = 0
 	label_no = 0
 	for name in order:
 		items = groups.get(name)
@@ -117,11 +153,6 @@ def get_data(filters):
 			weight += g.total_weight
 		rows.append({"item_name": _("TOTALS"), "qty": qty, "total_weight": flt(weight, 2), "is_total_row": 1})
 		rows.append({})
-		grand_qty += qty
-		grand_weight += weight
-
-	if rows:
-		rows.append(
-			{"item_name": _("GRAND TOTAL"), "qty": grand_qty, "total_weight": flt(grand_weight, 2), "is_total_row": 1}
-		)
-	return rows
+		total_qty += qty
+		total_weight += weight
+	return total_qty, total_weight

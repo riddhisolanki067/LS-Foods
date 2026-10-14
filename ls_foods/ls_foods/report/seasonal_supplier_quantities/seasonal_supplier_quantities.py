@@ -186,7 +186,7 @@ def get_item_data(filters, view, locations=None, lines=None):
 			{
 				"item_name": _("Total"),
 				"qty": sum(r["qty"] for r in rows),
-				"total_weight": sum(r["total_weight"] for r in rows),
+				"total_weight": flt(sum(r["total_weight"] for r in rows), 2),
 				"is_total_row": 1,
 			}
 		)
@@ -276,14 +276,14 @@ def get_totals_data(filters, lines=None):
 		for loc in locations:
 			qty, weight = sums.get((vendor, loc), (0.0, 0.0))
 			block.append(
-				{"vendor": vendor or _(NO_VENDOR), "location": loc, "qty": qty, "total_weight": weight}
+				{"vendor": vendor or _(NO_VENDOR), "location": loc, "qty": qty, "total_weight": flt(weight, 2)}
 			)
 		rows.extend(block)
 		rows.append(
 			{
 				"vendor": _("Totals"),
 				"qty": sum(r["qty"] for r in block),
-				"total_weight": sum(r["total_weight"] for r in block),
+				"total_weight": flt(sum(r["total_weight"] for r in block), 2),
 				"is_total_row": 1,
 			}
 		)
