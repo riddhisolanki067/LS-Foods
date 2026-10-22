@@ -10,7 +10,8 @@ contact, and a new season's change means editing field options. So:
   * ``custom_pick_up_location`` on Sales Order is a **Link** to it. It is a new
     field rather than the old one converted, because Frappe does not allow a
     Select to be turned into a Link.
-  * The old Select is hidden, not deleted — it and its data stay on every order.
+  * The old Select was hidden first and, once live orders were moved over,
+    removed (patch v0_1_0). Its DB column is left behind by Frappe on purpose.
   * Home Delivery is location **0** (it was option 10 on the old Select).
 
 The locations are seeded once from the 2026 Fall flyer ("Pick-Up Locations",
@@ -41,7 +42,8 @@ CUSTOM_FIELDS = {
 			"label": "Pick-Up Location",
 			"fieldtype": "Link",
 			"options": MASTER,
-			"insert_after": OLD_SELECT_FIELD,
+			# where the old Select sat, so the field keeps its place after the Select is gone
+			"insert_after": "tax_id",
 			"in_standard_filter": 1,
 			"allow_on_submit": 1,
 			"description": "Type the number from the order form. 0 is Home Delivery.",
@@ -67,7 +69,6 @@ LOCATIONS = [
 def run():
 	create_custom_fields(CUSTOM_FIELDS, ignore_validate=True)
 	seed_locations()
-	hide_old_select()
 	backfill_sales_orders()
 	frappe.clear_cache(doctype="Sales Order")
 
@@ -93,11 +94,29 @@ def _ensure(number, **values):
 	frappe.get_doc({"doctype": MASTER, "location_number": number, **values}).insert(ignore_permissions=True)
 
 
-def hide_old_select():
-	"""The Select the Link replaces: out of sight, data kept."""
+def remove_old_select():
+	"""Delete the client's old Select once every order carries the Link.
+
+	Runs the backfill first, then refuses (returns the leftovers) if any order
+	still has a numbered old value and no Link — nothing is lost silently.
+	Deleting a Custom Field does not drop its column: the old values stay in
+	`tabSales Order` until someone trims the table.
+	"""
 	name = f"Sales Order-{OLD_SELECT_FIELD}"
-	if frappe.db.exists("Custom Field", name):
-		frappe.db.set_value("Custom Field", name, "hidden", 1)
+	if not frappe.db.exists("Custom Field", name):
+		return []
+
+	backfill_sales_orders()
+	leftovers = frappe.db.sql_list(
+		f"""select name from `tabSales Order`
+		     where `{OLD_SELECT_FIELD}` regexp '^ *[0-9]' and ifnull(`{LINK_FIELD}`, '') = ''"""
+	)
+	if leftovers:
+		return leftovers
+
+	frappe.delete_doc("Custom Field", name, ignore_permissions=True, force=True)
+	frappe.clear_cache(doctype="Sales Order")
+	return []
 
 
 def backfill_sales_orders():

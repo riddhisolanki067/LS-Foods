@@ -92,6 +92,9 @@ frappe.ui.form.on("Sales Order", {
 	refresh(frm) {
 		ls_foods_per_lb.hydrate(frm);
 		ls_foods_row_delivery_date_optional(frm);
+		if (frm.doc.docstatus < 2 && !["Closed", "Completed"].includes(frm.doc.status)) {
+			frm.add_custom_button(__("Update Weights from Items"), () => ls_foods_weight_dialog(frm));
+		}
 		const owed = flt(frm.doc.custom_deposit_due) - flt(frm.doc.advance_paid);
 		if (frm.doc.docstatus !== 1 || owed <= 0 || ["Closed", "Completed"].includes(frm.doc.status)) {
 			return;
@@ -112,3 +115,78 @@ frappe.ui.form.on("Sales Order", {
 		);
 	},
 });
+
+// "Update Weights from Items": an item's weight was missing or wrong when the
+// line was added, and has since been corrected on the item. Shows each line
+// whose weight differs from the item master and copies the ticked ones across —
+// also on a submitted order (ls_foods/order_weight_refresh.py).
+function ls_foods_weight_dialog(frm) {
+	frappe.call({
+		method: "ls_foods.order_weight_refresh.get_weight_changes",
+		args: { sales_order: frm.doc.name },
+		freeze: true,
+		callback(r) {
+			const changes = r.message || [];
+			if (!changes.length) {
+				frappe.msgprint(__("Every line already has the item's current weight."));
+				return;
+			}
+			const money = changes.some((c) => c.new_rate !== c.old_rate);
+			const body = changes
+				.map(
+					(c) => `<tr>
+						<td><input type="checkbox" class="ls-weight-row" data-row="${c.row}" checked></td>
+						<td>${c.idx}</td>
+						<td>${frappe.utils.escape_html(c.item_code)}<br><small class="text-muted">${frappe.utils.escape_html(c.item_name || "")}</small></td>
+						<td class="text-right">${c.qty}</td>
+						<td class="text-right">${c.old_weight} → <b>${c.new_weight}</b></td>
+						${money ? `<td class="text-right">${c.new_rate !== c.old_rate ? `${format_currency(c.old_rate, frm.doc.currency)} → <b>${format_currency(c.new_rate, frm.doc.currency)}</b>` : __("no change")}</td>` : ""}
+					</tr>`
+				)
+				.join("");
+			const d = new frappe.ui.Dialog({
+				title: __("Update Weights from Items"),
+				size: "large",
+				fields: [{ fieldtype: "HTML", fieldname: "rows" }],
+				primary_action_label: __("Update Ticked Lines"),
+				primary_action() {
+					const rows = d.$wrapper.find(".ls-weight-row:checked").map((i, el) => $(el).data("row")).get();
+					if (!rows.length) return;
+					frappe.call({
+						method: "ls_foods.order_weight_refresh.apply_weight_changes",
+						args: { sales_order: frm.doc.name, rows },
+						freeze: true,
+						callback(res) {
+							d.hide();
+							const out = res.message || {};
+							frappe.show_alert({
+								message: __("{0} line(s) updated", [out.updated || 0]),
+								indicator: "green",
+							});
+							if (out.overpaid) {
+								frappe.msgprint(
+									__("The order total is now {0} less than what has already been paid against it.", [
+										format_currency(out.overpaid, frm.doc.currency),
+									]),
+									__("Paid more than the order total")
+								);
+							}
+							frm.reload_doc();
+						},
+					});
+				},
+			});
+			d.fields_dict.rows.$wrapper.html(`
+				<p class="text-muted">${__("Case Weight, Line Weight and Unit Price ($/lb) are copied from the item. The case price stays as it is")}${
+					money ? __(", except for items priced per lb, where the price follows the weight") : ""
+				}.</p>
+				<table class="table table-bordered table-sm">
+					<thead><tr><th></th><th>#</th><th>${__("Item")}</th><th>${__("Qty")}</th><th>${__("Case Weight (lb)")}</th>${
+						money ? `<th>${__("Rate")}</th>` : ""
+					}</tr></thead>
+					<tbody>${body}</tbody>
+				</table>`);
+			d.show();
+		},
+	});
+}

@@ -1,98 +1,167 @@
 {#-
   LS Foods — Sales Invoice.
 
-  Shows, per line, the case price, the unit price and the case weight, and a
-  Total Weight (lb) at the foot beside the money totals.
+  Laid out like the client's old invoice ("LS Foods Spring 2026", 2026-10-22),
+  re-arranged for a #10 window envelope:
 
-  Items are stocked and sold in Cases, so there are no UOM conversions anywhere:
-  Qty is cases, Rate is the price of a case, and custom_case_weight is simply the
-  pounds in one case — typed on the line, so a heavy or light shipment prints its
-  real weight.
+      LS Foods                                          Invoice / Date / Order
+      [ customer name + billing address ]  <- sits in the envelope window
+                                                         Ship To (right)
+      Phone · Delivery Location
+      Product Code | Description | Quantity | Price | Item Total
+      Order Notes + payments (left)          Free Dairy/Pizza, Subtotal,
+                                             Delivery Charge, Total, Total Paid,
+                                             Amount Due (right)
+      Thank-you line and the farm's address.
 
-  doc.total_net_weight is print_hide = 1 on the standard doctype and would never
-  reach a PDF unless printed explicitly. Sales Invoice has NO document-level
-  Weight UOM field (nor does Delivery Note), which is why "lb" is written into
-  the label rather than read from a field. Every item carries Weight UOM = Lb,
-  so the total is already in pounds.
+  The window block's position assumes the standard print margins (15 mm) and no
+  Letter Head — the format carries its own header. Print with "Letter Head" off.
 
-  Beef / hog shares (share_billing.invoice_view) print first, laid out like the
-  client's item build sheet:
-      <share> (<weight> lbs.)                     <subtotal, bold>
+  FREE (the free dairy/pizza credit), Delivery Charge and Late Fee are order
+  lines like any other, but print in the totals, as on the old invoice.
+
+  Order Notes are driven by the items: any line in item group "Grains" adds the
+  grain-storage note, SF5631 (pollock) adds the freezer-bag note.
+
+  Beef / hog shares (share_billing.invoice_view) keep their build-sheet block:
+      <share> (<weight> lbs.)                     <subtotal>
         Quarter Beef Deposit   4 x -600.00         -2,400.00
         <share>, hanging weight  370 lb x 6.50      2,405.00
         Processing Fee           370 lb x 0.90        333.00
         Balance due for this share                    338.00
   The deposit printed there is the share's Sales Order line (the fixed deposit);
-  the money actually received is the invoice's advance, shown in the totals.
-  An invoice with no shares prints exactly as before.
+  the money actually received is in Total Paid and the payments table.
 -#}
 {%- set view = invoice_view(doc) %}
+{%- set t = namespace(free=0, delivery=0, late=0, has_free=0, has_late=0, grains=0, pollock=0) %}
+{%- set products = [] %}
+{%- for row in view.others %}
+  {%- if row.item_code == "FREE" %}{% set t.free = t.free + row.amount %}{% set t.has_free = 1 %}
+  {%- elif row.item_code == "Delivery Charge" %}{% set t.delivery = t.delivery + row.amount %}
+  {%- elif row.item_code == "Late Fee" %}{% set t.late = t.late + row.amount %}{% set t.has_late = 1 %}
+  {%- else %}{% set _ = products.append(row) %}{% endif %}
+{%- endfor %}
+{%- for row in doc.items %}
+  {%- if row.item_group == "Grains" %}{% set t.grains = 1 %}{% endif %}
+  {%- if row.item_code == "SF5631" %}{% set t.pollock = 1 %}{% endif %}
+{%- endfor %}
+{%- set subtotal = doc.net_total - t.delivery - t.late %}
+{%- set order_total = doc.rounded_total or doc.grand_total %}
+{%- set amount_due = doc.outstanding_amount if doc.docstatus == 1 else (order_total - (doc.total_advance or 0)) %}
+
+{#- Header details: the Sales Order(s) the invoice came from, its Delivery
+    Location (Sales Invoice has no field for it) and the customer's phone. #}
+{%- set sales_orders = doc.items | map(attribute="sales_order") | select | unique | list %}
+{%- set location = namespace(name="") %}
+{%- for so in sales_orders %}{% if not location.name %}
+  {%- set loc = frappe.db.get_value("Sales Order", so, "custom_pick_up_location") %}
+  {%- if loc %}{% set location.name = frappe.db.get_value("Pick-Up Location", loc, "location_name") or loc %}{% endif %}
+{%- endif %}{% endfor %}
+{%- set phone = doc.contact_mobile or doc.contact_phone or frappe.db.get_value("Customer", doc.customer, "mobile_no") or "" %}
+
+{#- Payments received: advances pulled into the invoice plus payments made
+    against it after submit, each once. Check # is the cheque number; a payment
+    made any other way shows its mode (Cash, …). #}
+{%- set pay = namespace(seen=[]) %}
+{%- set payments = [] %}
+{%- for adv in doc.advances %}{% if adv.allocated_amount %}
+  {%- set _ = payments.append({"type": adv.reference_type, "name": adv.reference_name, "amount": adv.allocated_amount}) %}
+  {%- set _ = pay.seen.append(adv.reference_name) %}
+{%- endif %}{% endfor %}
+{%- if doc.docstatus == 1 %}
+  {%- for ref in frappe.get_all("Payment Entry Reference", filters={"reference_doctype": "Sales Invoice", "reference_name": doc.name, "docstatus": 1}, fields=["parent", "allocated_amount"]) %}
+    {%- if ref.parent not in pay.seen %}
+      {%- set _ = payments.append({"type": "Payment Entry", "name": ref.parent, "amount": ref.allocated_amount}) %}
+      {%- set _ = pay.seen.append(ref.parent) %}
+    {%- endif %}
+  {%- endfor %}
+{%- endif %}
+
 <style>
-  .ls-inv { font-size: 9pt; }
+  .ls-inv { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #000; }
   .ls-inv table { width: 100%; border-collapse: collapse; }
-  .ls-inv .items th, .ls-inv .items td { border: 1px solid #c8ccd0; padding: 4px 6px; }
-  .ls-inv .items th { background: #f4f5f6; text-align: left; font-weight: 600; }
+  .ls-inv td { vertical-align: top; }
+  .ls-inv .title { text-align: center; font-size: 20pt; font-weight: 700; padding-bottom: 4px; }
+  .ls-inv .meta td { padding: 1px 0; }
+  .ls-inv .lbl { font-weight: 700; }
   .ls-inv .num { text-align: right; white-space: nowrap; }
-  .ls-inv .head td { border: 0; padding: 0 0 2px 0; vertical-align: top; }
-  .ls-inv .totals td { padding: 3px 6px; border: 0; }
-  .ls-inv .totals .grand td { border-top: 1.5px solid #333; font-weight: 700; font-size: 10pt; }
-  .ls-inv .weight-box { border: 1px solid #c8ccd0; padding: 6px 8px; background: #f4f5f6; }
-  .ls-inv .muted { color: #6b7075; }
+  /* #10 window envelope, letter folded in thirds: the window shows roughly
+     2"-3" from the top of the sheet and 7/8"-5 3/8" from the left. With 15 mm
+     page margins the address block starts ~1.4" / ~0.3" into the content, and
+     Ship To starts right of the window (left column = 68% of 7.3"). */
+  .ls-inv .top { height: 1.4in; }
+  .ls-inv .window { height: 1.05in; width: 3.4in; padding-left: 0.3in; font-size: 11pt; line-height: 1.3; }
+  .ls-inv .items { margin-top: 14px; }
+  .ls-inv .items th, .ls-inv .items td { border: 1px solid #c8ccd0; padding: 4px 8px; }
+  .ls-inv .items th { text-align: left; font-weight: 700; vertical-align: bottom; color: #000; }
+  .ls-inv .items th.num { text-align: right; }
+  .ls-inv .sub { color: #555; font-size: 8pt; }
+  .ls-inv .totals td { padding: 1px 0 4px 0; }
+  .ls-inv .totals td.lbl { text-align: right; padding-right: 6px; }
+  .ls-inv .pay { width: 80%; margin: 12px 0 0 0.3in; }
+  .ls-inv .pay th, .ls-inv .pay td { border: 1px solid #c8ccd0; padding: 4px 8px; text-align: left; color: #000; }
+  .ls-inv .pay .num { text-align: right; }
   .ls-inv .share-head td { font-weight: 700; background: #f4f5f6; }
   .ls-inv .share-line td:first-child { padding-left: 18px; }
   .ls-inv .share-bal td { font-weight: 700; border-top: 1.5px solid #333; }
-  .ls-inv .neg { color: #9a1c1c; }
+  .ls-inv .thanks { text-align: center; font-size: 15pt; font-weight: 700; margin-top: 22px; page-break-inside: avoid; }
+  .ls-inv .farm { text-align: center; font-weight: 700; margin-top: 8px; }
 </style>
 
 <div class="ls-inv">
 
-  <table class="head">
+  <div class="top">
+    <div class="title">LS Foods</div>
+    <table class="meta">
+      <tr>
+        <td style="width:60%"></td>
+        <td class="num">
+          <div><span class="lbl">{{ _("Credit Note") if doc.is_return else _("Invoice") }}:</span> {{ doc.name }}</div>
+          <div><span class="lbl">{{ _("Date") }}:</span> {{ frappe.format(doc.posting_date, {"fieldtype": "Date"}) }}</div>
+          {%- if sales_orders %}
+          <div><span class="lbl">{{ _("Order ID") }}:</span> {{ sales_orders | join(", ") }}</div>
+          {%- endif %}
+          {%- if doc.po_no %}<div><span class="lbl">{{ _("PO") }}:</span> {{ doc.po_no }}</div>{% endif %}
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <table>
     <tr>
-      <td style="width:60%">
-        <div style="font-size:13pt;font-weight:700">{{ doc.company }}</div>
-        {% set addr = doc.company_address_display or "" %}
-        {% if addr %}<div class="muted">{{ addr }}</div>{% endif %}
-      </td>
-      <td style="width:40%" class="num">
-        <div style="font-size:13pt;font-weight:700">
-          {{ _("Credit Note") if doc.is_return else _("Invoice") }}
+      <td style="width:68%">
+        <div class="window">
+          <div style="font-weight:700">{{ doc.customer_name }}</div>
+          {%- if doc.address_display %}<div>{{ doc.address_display }}</div>{% endif %}
         </div>
-        <div>{{ doc.name }}</div>
-        <div class="muted">{{ frappe.format(doc.posting_date, {"fieldtype": "Date"}) }}</div>
-        {#- Sales Invoice has no header link to its order; each item row carries it. #}
-        {%- set sales_orders = doc.items | map(attribute="sales_order") | select | unique | join(", ") %}
-        {% if sales_orders %}<div class="muted">{{ _("Sales Order") }}: {{ sales_orders }}</div>{% endif %}
-        {% if doc.po_no %}<div class="muted">{{ _("PO") }}: {{ doc.po_no }}</div>{% endif %}
+      </td>
+      <td style="width:32%">
+        {%- set ship_to = doc.shipping_address or doc.address_display %}
+        {%- if ship_to %}
+        <div class="lbl">{{ _("Ship To") }}</div>
+        <div>{{ doc.shipping_address_name and frappe.db.get_value("Address", doc.shipping_address_name, "address_title") or doc.customer_name }}</div>
+        <div>{{ ship_to }}</div>
+        {%- endif %}
       </td>
     </tr>
   </table>
 
-  <table class="head" style="margin-top:10px">
+  <table class="meta" style="margin-top:6px">
     <tr>
-      <td style="width:50%">
-        <div style="font-weight:600">{{ _("Bill To") }}</div>
-        <div>{{ doc.customer_name }}</div>
-        {% if doc.address_display %}<div class="muted">{{ doc.address_display }}</div>{% endif %}
-      </td>
-      <td style="width:50%">
-        {% if doc.shipping_address %}
-          <div style="font-weight:600">{{ _("Ship To") }}</div>
-          <div class="muted">{{ doc.shipping_address }}</div>
-        {% endif %}
-      </td>
+      <td style="width:50%">{% if phone %}<span class="lbl">{{ _("Phone") }}:</span> {{ phone }}{% endif %}</td>
+      <td style="width:50%">{% if location.name %}<span class="lbl">{{ _("Delivery Location") }}:</span> {{ location.name }}{% endif %}</td>
     </tr>
   </table>
 
   {%- if view.shares %}
-  <table class="items" style="margin-top:12px">
+  <table class="items">
     <thead>
       <tr>
         <th>{{ _("Beef / Hog Share") }}</th>
         <th class="num" style="width:62px">{{ _("Qty") }}</th>
         <th style="width:56px">{{ _("Unit") }}</th>
         <th class="num" style="width:74px">{{ _("Price") }}</th>
-        <th class="num" style="width:84px">{{ _("Case Price") }}</th>
-        <th class="num" style="width:90px">{{ _("Amount") }}</th>
+        <th class="num" style="width:90px">{{ _("Item Total") }}</th>
       </tr>
     </thead>
     <tbody>
@@ -102,7 +171,6 @@
         <td class="num">{{ frappe.format(s.row.qty, {"fieldtype": "Float"}) }}</td>
         <td></td>
         <td></td>
-        <td></td>
         <td class="num">{{ frappe.format_value(s.subtotal, {"fieldtype": "Currency"}, doc) }}</td>
       </tr>
       {%- if s.deposit %}
@@ -110,17 +178,15 @@
         <td>{{ _(s.deposit_label) }}</td>
         <td class="num">{{ frappe.format(s.deposit_units, {"fieldtype": "Float"}) }}</td>
         <td></td>
-        <td class="num neg">-{{ frappe.format_value(s.deposit_each, {"fieldtype": "Currency"}, doc) }}</td>
-        <td></td>
-        <td class="num neg">-{{ frappe.format_value(s.deposit, {"fieldtype": "Currency"}, doc) }}</td>
+        <td class="num">-{{ frappe.format_value(s.deposit_each, {"fieldtype": "Currency"}, doc) }}</td>
+        <td class="num">-{{ frappe.format_value(s.deposit, {"fieldtype": "Currency"}, doc) }}</td>
       </tr>
       {%- endif %}
       <tr class="share-line">
         <td>{{ s.row.item_name }} &mdash; {{ _("hanging weight") }}</td>
         <td class="num">{{ frappe.format(s.weight, {"fieldtype": "Float"}) }}</td>
         <td>{{ _("Pounds") }}</td>
-        <td class="num">{{ frappe.format_value(s.row.custom_unit_price, {"fieldtype": "Currency"}, doc) }}<span class="muted" style="font-size:7.5pt"> /lb</span></td>
-        <td class="num">{{ frappe.format_value(s.row.rate, {"fieldtype": "Currency"}, doc) }}</td>
+        <td class="num">{{ frappe.format_value(s.row.custom_unit_price, {"fieldtype": "Currency"}, doc) }}<span class="sub"> /lb</span></td>
         <td class="num">{{ frappe.format_value(s.row.amount, {"fieldtype": "Currency"}, doc) }}</td>
       </tr>
       {%- if s.fee %}
@@ -128,13 +194,12 @@
         <td>{{ s.fee.item_name }}</td>
         <td class="num">{{ frappe.format(s.fee.qty, {"fieldtype": "Float"}) }}</td>
         <td>{{ _("Pounds") }}</td>
-        <td class="num">{{ frappe.format_value(s.fee.rate, {"fieldtype": "Currency"}, doc) }}<span class="muted" style="font-size:7.5pt"> /lb</span></td>
-        <td></td>
+        <td class="num">{{ frappe.format_value(s.fee.rate, {"fieldtype": "Currency"}, doc) }}<span class="sub"> /lb</span></td>
         <td class="num">{{ frappe.format_value(s.fee.amount, {"fieldtype": "Currency"}, doc) }}</td>
       </tr>
       {%- endif %}
       <tr class="share-bal">
-        <td colspan="5">{{ _("Balance due for this share") }}</td>
+        <td colspan="4">{{ _("Balance due for this share") }}</td>
         <td class="num">{{ frappe.format_value(s.balance, {"fieldtype": "Currency"}, doc) }}</td>
       </tr>
       {%- endfor %}
@@ -142,50 +207,29 @@
   </table>
   {%- endif %}
 
-  {%- if view.others %}
-  {%- if view.shares %}<div style="margin-top:12px;font-weight:600">{{ _("Other Items") }}</div>{% endif %}
-  <table class="items" style="margin-top:{{ '4px' if view.shares else '12px' }}">
+  {%- if products %}
+  <table class="items">
     <thead>
       <tr>
-        <th style="width:26px">#</th>
-        <th style="width:30%">{{ _("Item") }}</th>
-        <th class="num" style="width:52px">{{ _("Qty") }}</th>
-        <th style="width:48px">{{ _("UOM") }}</th>
-        <th class="num" style="width:70px">{{ _("Case Wt (lb)") }}</th>
-        <th class="num" style="width:74px">{{ _("Unit Price") }}</th>
-        <th class="num" style="width:70px">{{ _("Weight (lb)") }}</th>
-        <th class="num" style="width:78px">{{ _("Case Price") }}</th>
-        <th class="num" style="width:86px">{{ _("Amount") }}</th>
+        <th style="width:84px">{{ _("Product Code") }}</th>
+        <th>{{ _("Description") }}</th>
+        <th class="num" style="width:70px">{{ _("Quantity") }}</th>
+        <th class="num" style="width:74px">{{ _("Price") }}</th>
+        <th class="num" style="width:82px">{{ _("Item Total") }}</th>
       </tr>
     </thead>
     <tbody>
-      {%- for row in view.others %}
+      {%- for row in products %}
       <tr>
-        <td>{{ loop.index }}</td>
+        <td>{{ row.item_code }}</td>
         <td>
-          <div>{{ row.item_name }}</div>
-          {%- if row.item_code != row.item_name %}
-          <div class="muted" style="font-size:8pt">{{ row.item_code }}</div>
+          {{ row.item_name }}
+          {#- Priced by the pound: the weight is what sets the price, so show it. #}
+          {%- if row.custom_unit_price and row.custom_case_weight and frappe.db.exists("Item Price", {"item_code": row.item_code, "price_list": "Per Pound", "selling": 1}) %}
+          <div class="sub">{{ frappe.format(row.custom_case_weight, {"fieldtype": "Float"}) }} lb @ {{ frappe.format_value(row.custom_unit_price, {"fieldtype": "Currency"}, doc) }}/lb</div>
           {%- endif %}
         </td>
         <td class="num">{{ frappe.format(row.qty, {"fieldtype": "Float"}) }}</td>
-        <td>{{ row.uom }}</td>
-        <td class="num">
-          {%- if row.custom_case_weight -%}
-            {{ frappe.format(row.custom_case_weight, {"fieldtype": "Float"}) }}
-          {%- else -%}&ndash;{%- endif -%}
-        </td>
-        <td class="num">
-          {%- if row.custom_unit_price -%}
-            {{ frappe.format_value(row.custom_unit_price, {"fieldtype": "Currency"}, doc) }}
-            <span class="muted" style="font-size:7.5pt">/lb</span>
-          {%- else -%}&ndash;{%- endif -%}
-        </td>
-        <td class="num">
-          {%- if row.total_weight -%}
-            {{ frappe.format(row.total_weight, {"fieldtype": "Float"}) }}
-          {%- else -%}&ndash;{%- endif -%}
-        </td>
         <td class="num">{{ frappe.format_value(row.rate, {"fieldtype": "Currency"}, doc) }}</td>
         <td class="num">{{ frappe.format_value(row.amount, {"fieldtype": "Currency"}, doc) }}</td>
       </tr>
@@ -194,79 +238,70 @@
   </table>
   {%- endif %}
 
-  <table style="margin-top:12px">
+  <table style="margin-top:14px">
     <tr>
-      <td style="width:46%;vertical-align:top">
-        <div class="weight-box">
-          <table>
-            <tr>
-              <td>{{ _("Total Cases / Qty") }}</td>
-              <td class="num">{{ frappe.format(view.total_units, {"fieldtype": "Float"}) }}</td>
-            </tr>
-            <tr>
-              <td style="font-weight:700">{{ _("Total Weight (lb)") }}</td>
-              <td class="num" style="font-weight:700">
-                {{ frappe.format(doc.total_net_weight, {"fieldtype": "Float"}) }}
-              </td>
-            </tr>
-          </table>
+      <td style="width:55%">
+        {%- if t.grains or t.pollock or doc.terms %}
+        <div>
+          <span class="lbl">{{ _("Order Notes") }}:</span>
+          {%- if t.grains %}
+          We recommend storing all grains in temperatures below 55 degrees to prevent bugs and
+          weevils. Use containers with tight lids. We offer Gamma lids for 5-gallon buckets. If an
+          infestation occurs, freeze the grains for a week and store below 40 degrees. Organic
+          grains may be more susceptible.
+          {%- endif %}
+          {%- if t.pollock %}
+          {%- if t.grains %}<br><br>{% endif %}
+          We recommend repackaging the pollock in freezer bags to prevent freezer burn.
+          {%- endif %}
+          {%- if doc.terms %}{% if t.grains or t.pollock %}<br><br>{% endif %}{{ doc.terms }}{% endif %}
         </div>
-      </td>
-      <td style="width:8%"></td>
-      <td style="width:46%;vertical-align:top">
-        <table class="totals">
-          <tr>
-            <td>{{ _("Net Total") }}</td>
-            <td class="num">{{ frappe.format_value(doc.net_total, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
-          {%- for tax in doc.taxes %}
-          {%- if tax.tax_amount %}
-          <tr>
-            <td>{{ tax.description }}</td>
-            <td class="num">{{ frappe.format_value(tax.tax_amount, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
+        {%- endif %}
+
+        {%- if payments %}
+        <table class="pay">
+          <tr><th>{{ _("Check #") }}</th><th>{{ _("Date") }}</th><th class="num">{{ _("Amount") }}</th></tr>
+          {%- for p in payments %}
+          {%- if p.type == "Payment Entry" %}
+            {%- set pe = frappe.db.get_value("Payment Entry", p.name, ["mode_of_payment", "reference_no", "reference_date", "posting_date"], as_dict=1) %}
+          {%- else %}
+            {%- set pe = frappe.db.get_value("Journal Entry", p.name, ["cheque_no as reference_no", "cheque_date as reference_date", "posting_date"], as_dict=1) %}
           {%- endif %}
+          <tr>
+            <td>{{ pe.reference_no or pe.mode_of_payment or "" }}</td>
+            <td>{{ frappe.format(pe.reference_date or pe.posting_date, {"fieldtype": "Date"}) }}</td>
+            <td class="num">{{ frappe.format_value(p.amount, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
           {%- endfor %}
+        </table>
+        {%- endif %}
+      </td>
+      <td style="width:45%">
+        <table class="totals">
+          {%- if t.has_free %}
+          <tr><td class="lbl">{{ _("Free Dairy/Pizza") }}:</td><td class="num" style="width:90px">-{{ frappe.format_value(-t.free, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          {%- endif %}
+          <tr><td class="lbl">{{ _("Subtotal") }}:</td><td class="num" style="width:90px">{{ frappe.format_value(subtotal, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          <tr><td class="lbl">{{ _("Delivery Charge") }}:</td><td class="num">{{ frappe.format_value(t.delivery, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          {%- if t.has_late %}
+          <tr><td class="lbl">{{ _("Late Order Charge") }}:</td><td class="num">{{ frappe.format_value(t.late, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          {%- endif %}
+          {%- for tax in doc.taxes %}{% if tax.tax_amount %}
+          <tr><td class="lbl">{{ tax.description }}:</td><td class="num">{{ frappe.format_value(tax.tax_amount, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          {%- endif %}{% endfor %}
           {%- if doc.discount_amount %}
-          <tr>
-            <td>{{ _("Discount") }}</td>
-            <td class="num">-{{ frappe.format_value(doc.discount_amount, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
+          <tr><td class="lbl">{{ _("Discount") }}:</td><td class="num">-{{ frappe.format_value(doc.discount_amount, {"fieldtype": "Currency"}, doc) }}</td></tr>
           {%- endif %}
-          <tr class="grand">
-            <td>{{ _("Grand Total") }}</td>
-            <td class="num">{{ frappe.format_value(doc.grand_total, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
-          {%- if doc.total_advance %}
-          <tr>
-            <td>{{ _("Less: Deposit Paid") }}</td>
-            <td class="num neg">-{{ frappe.format_value(doc.total_advance, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
-          {%- endif %}
-          {%- if doc.outstanding_amount and not doc.is_return %}
-          <tr class="grand">
-            <td>{{ _("Balance Due") }}</td>
-            <td class="num">{{ frappe.format_value(doc.outstanding_amount, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
-          {%- if view.shares %}
-          <tr class="muted">
-            <td style="padding-left:14px">{{ _("Beef / hog share balance") }}</td>
-            <td class="num">{{ frappe.format_value(view.shares_balance, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
-          {%- if view.others %}
-          <tr class="muted">
-            <td style="padding-left:14px">{{ _("Other items") }}</td>
-            <td class="num">{{ frappe.format_value(view.others_total, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
-          {%- endif %}
-          {%- endif %}
+          <tr><td class="lbl">{{ _("Total") }}:</td><td class="num">{{ frappe.format_value(order_total, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          {%- if not doc.is_return %}
+          <tr><td class="lbl">{{ _("Total Paid") }}:</td><td class="num">{{ frappe.format_value(order_total - amount_due, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          <tr><td class="lbl">{{ _("Amount Due") }}:</td><td class="num" style="font-weight:700">{{ frappe.format_value(amount_due, {"fieldtype": "Currency"}, doc) }}</td></tr>
           {%- endif %}
         </table>
       </td>
     </tr>
   </table>
 
-  {%- if doc.terms %}
-  <div style="margin-top:14px" class="muted">{{ doc.terms }}</div>
-  {%- endif %}
+  <div class="thanks">Thank you for supporting small farms and local business!</div>
+  <div class="farm">52941 York Hills Dr. Middlebury IN 46540 -- 574-971-4424</div>
 </div>

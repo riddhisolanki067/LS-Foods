@@ -12,3 +12,4 @@ ls_foods.patches.v0_0_6.setup_customer_master
 ls_foods.patches.v0_0_7.setup_case_pricing
 ls_foods.patches.v0_0_8.sales_order_case_weight
 ls_foods.patches.v0_0_9.setup_pick_up_locations
+ls_foods.patches.v0_1_0.remove_old_pickup_select

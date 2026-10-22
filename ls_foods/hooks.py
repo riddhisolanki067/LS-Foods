@@ -236,7 +236,10 @@ doctype_js = {
 	"Sales Invoice": ["public/js/per_lb_pricing.js", "public/js/sales_invoice.js"],
 	"Sales Order": ["public/js/per_lb_pricing.js", "public/js/sales_order.js"],
 }
-doctype_list_js = {"Expense Claim": "public/js/expense_claim_list.js"}
+doctype_list_js = {
+	"Expense Claim": "public/js/expense_claim_list.js",
+	"Sales Order": "public/js/sales_order_list.js",
+}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 

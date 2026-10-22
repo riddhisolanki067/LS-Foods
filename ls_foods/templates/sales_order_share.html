@@ -6,8 +6,15 @@
   a whole beef — because on the order the share IS priced at its fixed deposit
   (share_billing.py). The hanging-weight charge and processing come on the final
   invoice. Other items print with their case weight and price.
+
+  Totals: Total - Paid (the order's Advance Paid) = Total Due. On a share order
+  that is what is owed now; the share's hanging-weight balance and processing
+  are not on the order and come on the final invoice.
 -#}
 {%- set view = order_view(doc) %}
+{#- Rounded total when rounding is on, as ERPNext bills it. #}
+{%- set order_total = doc.rounded_total or doc.grand_total %}
+{%- set total_due = order_total - (doc.advance_paid or 0) %}
 <style>
   .ls-so { font-size: 9pt; }
   .ls-so table { width: 100%; border-collapse: collapse; }
@@ -26,8 +33,10 @@
     <tr>
       <td style="width:60%">
         <div style="font-size:13pt;font-weight:700">{{ doc.company }}</div>
+         <div style="font-size:13pt;">{{ doc.custom_pick_up_location }}</div>
         {% if doc.company_address_display %}<div class="muted">{{ doc.company_address_display }}</div>{% endif %}
       </td>
+      
       <td style="width:40%" class="num">
         <div style="font-size:13pt;font-weight:700">{{ _("Sales Order") }}</div>
         <div>{{ doc.name }}</div>
@@ -107,16 +116,14 @@
             <td style="font-weight:700">{{ _("Deposit Due Now") }}</td>
             <td class="num" style="font-weight:700">{{ frappe.format_value(view.deposits, {"fieldtype": "Currency"}, doc) }}</td>
           </tr>
-          {%- if doc.advance_paid %}
-          <tr>
-            <td>{{ _("Deposit Paid") }}</td>
-            <td class="num">{{ frappe.format_value(doc.advance_paid, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
           {%- endif %}
-          {%- endif %}
-          {%- if view.others %}
+          {#- "Other Items" only splits a share order (deposits vs everything else).
+              On a normal order it would just repeat the Total, so it is left out —
+              unless there is tax, when it prints as the Subtotal the tax is added to. #}
+          {%- set has_tax = doc.taxes | selectattr("tax_amount") | list | length %}
+          {%- if view.others and (view.shares or has_tax) %}
           <tr>
-            <td>{{ _("Other Items") }}</td>
+            <td>{{ _("Other Items") if view.shares else _("Subtotal") }}</td>
             <td class="num">{{ frappe.format_value(view.others_total, {"fieldtype": "Currency"}, doc) }}</td>
           </tr>
           {%- endif %}
@@ -127,8 +134,25 @@
           </tr>
           {%- endif %}{%- endfor %}
           <tr class="grand">
+            <td>{{ _("Total") }}</td>
+            <td class="num">{{ frappe.format_value(order_total, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {#- Paid = every payment received against this order (Advance Paid), share
+              deposit and anything else alike, so it is shown once, here. #}
+          {%- if doc.advance_paid %}
+          <tr>
+            <td>{{ _("Less: Deposit Paid") if view.shares else _("Less: Paid") }}</td>
+            <td class="num">-{{ frappe.format_value(doc.advance_paid, {"fieldtype": "Currency"}, doc) }}</td>
+          </tr>
+          {%- endif %}
+          <tr class="grand">
+            {%- if total_due < -0.005 %}
+            <td>{{ _("Credit") }}</td>
+            <td class="num">{{ frappe.format_value(-total_due, {"fieldtype": "Currency"}, doc) }}</td>
+            {%- else %}
             <td>{{ _("Total Due") }}</td>
-            <td class="num">{{ frappe.format_value(doc.grand_total, {"fieldtype": "Currency"}, doc) }}</td>
+            <td class="num">{{ frappe.format_value(total_due, {"fieldtype": "Currency"}, doc) }}</td>
+            {%- endif %}
           </tr>
         </table>
       </td>
