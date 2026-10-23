@@ -5,13 +5,14 @@
   re-arranged for a #10 window envelope:
 
       LS Foods                                          Invoice / Date / Order
-      [ customer name + billing address ]  <- sits in the envelope window
+      [ Bill To: name, billing address, phone ]  <- sits in the envelope window
                                                          Ship To (right)
-      Phone · Delivery Location
+      Delivery Location
       Product Code | Description | Quantity | Price | Item Total
-      Order Notes + payments (left)          Free Dairy/Pizza, Subtotal,
-                                             Delivery Charge, Total, Total Paid,
-                                             Amount Due (right)
+      Order Notes (left)                     Free Dairy/Pizza, Subtotal,
+                                             Delivery Charge, Total, Payment Applied,
+                                             Total Amount Due, Credit Remaining (right)
+      Payments: Check # | Date | Amount Paid | Applied to Invoice | Credit Remaining
       Thank-you line and the farm's address.
 
   The window block's position assumes the standard print margins (15 mm) and no
@@ -30,7 +31,7 @@
         Processing Fee           370 lb x 0.90        333.00
         Balance due for this share                    338.00
   The deposit printed there is the share's Sales Order line (the fixed deposit);
-  the money actually received is in Total Paid and the payments table.
+  the money actually received is in Payment Applied and the payments table.
 -#}
 {%- set view = invoice_view(doc) %}
 {%- set t = namespace(free=0, delivery=0, late=0, has_free=0, has_late=0, grains=0, pollock=0) %}
@@ -47,6 +48,10 @@
 {%- endfor %}
 {%- set subtotal = doc.net_total - t.delivery - t.late %}
 {%- set order_total = doc.rounded_total or doc.grand_total %}
+{#- Totals: Total - Payment Applied = Total Amount Due. Payment Applied is only
+    the part of each cheque used on this invoice; the whole cheque and what is
+    left of it are in the payments table, and the leftover also prints as
+    Credit Remaining under the Amount Due. #}
 {%- set amount_due = doc.outstanding_amount if doc.docstatus == 1 else (order_total - (doc.total_advance or 0)) %}
 
 {#- Header details: the Sales Order(s) the invoice came from, its Delivery
@@ -57,25 +62,50 @@
   {%- set loc = frappe.db.get_value("Sales Order", so, "custom_pick_up_location") %}
   {%- if loc %}{% set location.name = frappe.db.get_value("Pick-Up Location", loc, "location_name") or loc %}{% endif %}
 {%- endif %}{% endfor %}
-{%- set phone = doc.contact_mobile or doc.contact_phone or frappe.db.get_value("Customer", doc.customer, "mobile_no") or "" %}
+{#- Phone: the customer's current numbers from the Phone Numbers grid on the
+    Customer (primary first); the invoice's own contact fields are usually
+    blank because the contact carries no "primary mobile". #}
+{%- set phones = frappe.get_all("Customer Phone Entry", filters={"parent": doc.customer, "parenttype": "Customer", "parentfield": "custom_phone_numbers", "custom_current": 1}, fields=["phone"], order_by="is_primary_phone desc, idx asc") | map(attribute="phone") | select | list %}
+{%- set phone = phones | join(" / ") or doc.contact_mobile or doc.contact_phone or "" %}
 
 {#- Payments received: advances pulled into the invoice plus payments made
     against it after submit, each once. Check # is the cheque number; a payment
-    made any other way shows its mode (Cash, …). #}
-{%- set pay = namespace(seen=[]) %}
+    made any other way shows its mode (Cash, …).
+    For each one: Amount = the whole cheque, Applied = the part used on this
+    invoice, Credit = what is left of the cheque after this invoice and any
+    other submitted invoice it has paid (e.g. paid for a whole order, invoiced
+    in part — the rest stays as credit on the order). #}
+{%- set pay = namespace(seen=[], paid=0, applied=0, credit=0) %}
 {%- set payments = [] %}
 {%- for adv in doc.advances %}{% if adv.allocated_amount %}
-  {%- set _ = payments.append({"type": adv.reference_type, "name": adv.reference_name, "amount": adv.allocated_amount}) %}
+  {%- set _ = payments.append({"type": adv.reference_type, "name": adv.reference_name, "applied": adv.allocated_amount, "available": adv.advance_amount}) %}
   {%- set _ = pay.seen.append(adv.reference_name) %}
 {%- endif %}{% endfor %}
 {%- if doc.docstatus == 1 %}
   {%- for ref in frappe.get_all("Payment Entry Reference", filters={"reference_doctype": "Sales Invoice", "reference_name": doc.name, "docstatus": 1}, fields=["parent", "allocated_amount"]) %}
     {%- if ref.parent not in pay.seen %}
-      {%- set _ = payments.append({"type": "Payment Entry", "name": ref.parent, "amount": ref.allocated_amount}) %}
+      {%- set _ = payments.append({"type": "Payment Entry", "name": ref.parent, "applied": ref.allocated_amount, "available": ref.allocated_amount}) %}
       {%- set _ = pay.seen.append(ref.parent) %}
     {%- endif %}
   {%- endfor %}
 {%- endif %}
+{%- for p in payments %}
+  {%- set pe = frappe.db.get_value(p.type, p.name, "name") %}
+  {%- if not pe %}{% set _ = p.update({"missing": 1, "paid": 0, "credit": 0, "check": p.name, "date": None}) %}
+  {%- elif p.type == "Payment Entry" %}
+    {%- set pe = frappe.db.get_value("Payment Entry", p.name, ["mode_of_payment", "reference_no", "reference_date", "posting_date", "paid_amount"], as_dict=1) %}
+    {#- Used on other submitted invoices (this one excluded, it is p.applied). #}
+    {%- set other = frappe.get_all("Payment Entry Reference", filters={"parent": p.name, "reference_doctype": "Sales Invoice", "reference_name": ["!=", doc.name], "docstatus": 1}, fields=["allocated_amount"]) | sum(attribute="allocated_amount") %}
+    {%- set _ = p.update({"paid": pe.paid_amount, "credit": [pe.paid_amount - other - p.applied, 0] | max}) %}
+  {%- else %}
+    {%- set pe = frappe.db.get_value("Journal Entry", p.name, ["cheque_no as reference_no", "cheque_date as reference_date", "posting_date"], as_dict=1) %}
+    {%- set _ = p.update({"paid": p.available, "credit": [p.available - p.applied, 0] | max}) %}
+  {%- endif %}
+  {%- if not p.missing %}{% set _ = p.update({"check": pe.reference_no or pe.mode_of_payment or "", "date": pe.reference_date or pe.posting_date}) %}{% endif %}
+  {%- set pay.paid = pay.paid + p.paid %}
+  {%- set pay.applied = pay.applied + p.applied %}
+  {%- set pay.credit = pay.credit + p.credit %}
+{%- endfor %}
 
 <style>
   .ls-inv { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #000; }
@@ -98,7 +128,7 @@
   .ls-inv .sub { color: #555; font-size: 8pt; }
   .ls-inv .totals td { padding: 1px 0 4px 0; }
   .ls-inv .totals td.lbl { text-align: right; padding-right: 6px; }
-  .ls-inv .pay { width: 80%; margin: 12px 0 0 0.3in; }
+  .ls-inv .pay { margin-top: 14px; page-break-inside: avoid; }
   .ls-inv .pay th, .ls-inv .pay td { border: 1px solid #c8ccd0; padding: 4px 8px; text-align: left; color: #000; }
   .ls-inv .pay .num { text-align: right; }
   .ls-inv .share-head td { font-weight: 700; background: #f4f5f6; }
@@ -131,8 +161,10 @@
     <tr>
       <td style="width:68%">
         <div class="window">
+          <div class="lbl">{{ _("Bill To") }}</div>
           <div style="font-weight:700">{{ doc.customer_name }}</div>
           {%- if doc.address_display %}<div>{{ doc.address_display }}</div>{% endif %}
+          {%- if phone %}<div>{{ phone }}</div>{% endif %}
         </div>
       </td>
       <td style="width:32%">
@@ -148,8 +180,7 @@
 
   <table class="meta" style="margin-top:6px">
     <tr>
-      <td style="width:50%">{% if phone %}<span class="lbl">{{ _("Phone") }}:</span> {{ phone }}{% endif %}</td>
-      <td style="width:50%">{% if location.name %}<span class="lbl">{{ _("Delivery Location") }}:</span> {{ location.name }}{% endif %}</td>
+      <td>{% if location.name %}<span class="lbl">{{ _("Delivery Location") }}:</span> {{ location.name }}{% endif %}</td>
     </tr>
   </table>
 
@@ -258,23 +289,6 @@
         </div>
         {%- endif %}
 
-        {%- if payments %}
-        <table class="pay">
-          <tr><th>{{ _("Check #") }}</th><th>{{ _("Date") }}</th><th class="num">{{ _("Amount") }}</th></tr>
-          {%- for p in payments %}
-          {%- if p.type == "Payment Entry" %}
-            {%- set pe = frappe.db.get_value("Payment Entry", p.name, ["mode_of_payment", "reference_no", "reference_date", "posting_date"], as_dict=1) %}
-          {%- else %}
-            {%- set pe = frappe.db.get_value("Journal Entry", p.name, ["cheque_no as reference_no", "cheque_date as reference_date", "posting_date"], as_dict=1) %}
-          {%- endif %}
-          <tr>
-            <td>{{ pe.reference_no or pe.mode_of_payment or "" }}</td>
-            <td>{{ frappe.format(pe.reference_date or pe.posting_date, {"fieldtype": "Date"}) }}</td>
-            <td class="num">{{ frappe.format_value(p.amount, {"fieldtype": "Currency"}, doc) }}</td>
-          </tr>
-          {%- endfor %}
-        </table>
-        {%- endif %}
       </td>
       <td style="width:45%">
         <table class="totals">
@@ -294,13 +308,42 @@
           {%- endif %}
           <tr><td class="lbl">{{ _("Total") }}:</td><td class="num">{{ frappe.format_value(order_total, {"fieldtype": "Currency"}, doc) }}</td></tr>
           {%- if not doc.is_return %}
-          <tr><td class="lbl">{{ _("Total Paid") }}:</td><td class="num">{{ frappe.format_value(order_total - amount_due, {"fieldtype": "Currency"}, doc) }}</td></tr>
-          <tr><td class="lbl">{{ _("Amount Due") }}:</td><td class="num" style="font-weight:700">{{ frappe.format_value(amount_due, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          <tr><td class="lbl">{{ _("Payment Applied") }}:</td><td class="num">{{ frappe.format_value(order_total - amount_due, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          <tr><td class="lbl">{{ _("Total Amount Due") }}:</td><td class="num" style="font-weight:700">{{ frappe.format_value(amount_due, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          {%- if pay.credit > 0.005 %}
+          <tr><td class="lbl">{{ _("Credit Remaining") }}:</td><td class="num">{{ frappe.format_value(pay.credit, {"fieldtype": "Currency"}, doc) }}</td></tr>
+          {%- endif %}
           {%- endif %}
         </table>
       </td>
     </tr>
   </table>
+
+  {%- if payments %}
+  <table class="pay">
+    <tr>
+      <th>{{ _("Check #") }}</th><th>{{ _("Date") }}</th><th class="num">{{ _("Amount Paid") }}</th>
+      <th class="num">{{ _("Applied to Invoice") }}</th><th class="num">{{ _("Credit Remaining") }}</th>
+    </tr>
+    {%- for p in payments %}
+    <tr>
+      <td>{{ p.check }}</td>
+      <td>{{ frappe.format(p.date, {"fieldtype": "Date"}) }}</td>
+      <td class="num">{{ frappe.format_value(p.paid, {"fieldtype": "Currency"}, doc) }}</td>
+      <td class="num">{{ frappe.format_value(p.applied, {"fieldtype": "Currency"}, doc) }}</td>
+      <td class="num">{{ frappe.format_value(p.credit, {"fieldtype": "Currency"}, doc) }}</td>
+    </tr>
+    {%- endfor %}
+    {%- if payments | length > 1 %}
+    <tr style="font-weight:700">
+      <td colspan="2">{{ _("Total") }}</td>
+      <td class="num">{{ frappe.format_value(pay.paid, {"fieldtype": "Currency"}, doc) }}</td>
+      <td class="num">{{ frappe.format_value(pay.applied, {"fieldtype": "Currency"}, doc) }}</td>
+      <td class="num">{{ frappe.format_value(pay.credit, {"fieldtype": "Currency"}, doc) }}</td>
+    </tr>
+    {%- endif %}
+  </table>
+  {%- endif %}
 
   <div class="thanks">Thank you for supporting small farms and local business!</div>
   <div class="farm">52941 York Hills Dr. Middlebury IN 46540 -- 574-971-4424</div>

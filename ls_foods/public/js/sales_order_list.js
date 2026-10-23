@@ -7,6 +7,14 @@ frappe.listview_settings["Sales Order"] = frappe.listview_settings["Sales Order"
 	const original = settings.onload;
 	settings.onload = function (listview) {
 		if (original) original.apply(this, arguments);
+		// Backorders & Invoicing (ls_foods/order_invoicing.py): invoice many
+		// orders at once, holding back what did not come in. All open orders, or
+		// only the ticked ones.
+		listview.page.add_inner_button(__("Backorders & Invoicing"), () => {
+			const names = listview.get_checked_items(true);
+			frappe.route_options = names.length ? { sales_orders: names } : null;
+			frappe.set_route("backorder-invoicing");
+		});
 		listview.page.add_actions_menu_item(__("Update Weights from Items"), () => {
 			const names = listview.get_checked_items(true);
 			if (!names.length) return;
