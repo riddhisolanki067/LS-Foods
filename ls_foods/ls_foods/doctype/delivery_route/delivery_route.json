@@ -1,0 +1,149 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-24 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "route_date",
+  "vehicle",
+  "column_break_head",
+  "total_orders",
+  "invoices_to_print",
+  "orders_section",
+  "order_ids",
+  "column_break_orders",
+  "route_check",
+  "stops_section",
+  "stops"
+ ],
+ "fields": [
+  {
+   "fieldname": "route_date",
+   "fieldtype": "Date",
+   "label": "Delivery Date",
+   "reqd": 1,
+   "default": "Today",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "vehicle",
+   "fieldtype": "Data",
+   "label": "Vehicle",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "One route per date and vehicle. Pasting a new list here replaces the old one."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_orders",
+   "fieldtype": "Int",
+   "label": "Orders",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "invoices_to_print",
+   "fieldtype": "Int",
+   "label": "Invoices to Print",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "orders_section",
+   "fieldtype": "Section Break",
+   "label": "Sales Orders"
+  },
+  {
+   "fieldname": "order_ids",
+   "fieldtype": "Long Text",
+   "label": "Sales Order Nos. (one per line)",
+   "reqd": 1,
+   "description": "Paste the Order ID column from the route spreadsheet, in delivery order. The PDF prints the invoices in exactly this order."
+  },
+  {
+   "fieldname": "column_break_orders",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "route_check",
+   "fieldtype": "HTML",
+   "label": "Check"
+  },
+  {
+   "fieldname": "stops_section",
+   "fieldtype": "Section Break",
+   "label": "Print Order"
+  },
+  {
+   "fieldname": "stops",
+   "fieldtype": "Table",
+   "label": "Stops",
+   "options": "Delivery Route Stop"
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-24 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ls Foods",
+ "name": "Delivery Route",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "report": 1,
+   "share": 1
+  },
+  {
+   "role": "Accounts Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "report": 1,
+   "share": 1
+  },
+  {
+   "role": "Accounts User",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "report": 1,
+   "share": 1
+  },
+  {
+   "role": "Sales Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "report": 1,
+   "share": 1
+  }
+ ],
+ "sort_field": "route_date",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
