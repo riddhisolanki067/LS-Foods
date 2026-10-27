@@ -30,9 +30,18 @@ the line again until it is invoiced once the goods arrive.
 Lines already on a DRAFT invoice are counted as taken, so the same goods are
 never put on two invoices.
 
-Left out of the screen: orders with a beef/hog share still to invoice (the
-hanging weight has to be typed on the invoice and the processing lines follow
-it, see share_billing.py) and orders that are Closed, Completed or On Hold.
+Beef / hog shares
+-----------------
+The screen invoices the OTHER items of an order that has a share; the share
+itself is never put on these invoices. It is billed later, once the hanging
+weight is known, on its own invoice made from the order (Create > Sales
+Invoice: hanging weight x $/lb plus the processing line, share_billing.py,
+less the deposit). So the share's DEPOSIT stays on the order: only what was
+paid beyond the deposits of the shares still to come is taken off the first
+invoice, and its print shows the deposit held for the share
+(share_billing.held_shares).
+
+Left out of the screen: orders that are Closed, Completed or On Hold.
 """
 
 import json
@@ -95,7 +104,7 @@ def get_open_orders(
 		limit_page_length=0,
 	)
 	if not orders:
-		return {"orders": [], "shares_skipped": 0}
+		return {"orders": []}
 
 	by_name = {o.name: o for o in orders}
 	items = frappe.get_all(
@@ -112,6 +121,7 @@ def get_open_orders(
 			"qty",
 			"returned_qty",
 			"rate",
+			"amount",
 			"custom_case_weight",
 		],
 		order_by="parent asc, idx asc",
@@ -122,17 +132,12 @@ def get_open_orders(
 	locations = dict(frappe.get_all("Pick-Up Location", fields=["name", "location_name"], as_list=True))
 
 	lines = {}
-	share_orders = set()
 	for row in items:
 		if not row.item_code or not flt(row.qty):
 			continue
 		done = invoiced.get(row.name, {})
 		pending = flt(row.qty) - flt(row.returned_qty) - flt(done.get("billed")) - flt(done.get("draft"))
 		if pending <= EPS:
-			continue
-		if is_share(row.item_code):
-			# The whole order waits: its processing lines go with the share.
-			share_orders.add(row.parent)
 			continue
 		stock = cint(frappe.get_cached_value("Item", row.item_code, "is_stock_item"))
 		lines.setdefault(row.parent, []).append(
@@ -153,10 +158,16 @@ def get_open_orders(
 				"is_fee": 0 if stock else 1,
 			}
 		)
+		if is_share(row.item_code):
+			# Shown, never invoiced here: its deposit stays on the order.
+			lines[row.parent][-1].update(
+				is_share=1, deposit_per_unit=flt(row.amount) / flt(row.qty) if flt(row.qty) else 0
+			)
 
 	out = []
 	for o in orders:
-		if not lines.get(o.name) or o.name in share_orders:
+		# Only a share left (its other items invoiced): nothing for this screen.
+		if not any(not l["is_fee"] and not l.get("is_share") for l in lines.get(o.name, [])):
 			continue
 		if item_code and not any(l["item_code"] == item_code for l in lines[o.name]):
 			continue
@@ -167,15 +178,16 @@ def get_open_orders(
 		o.partly_invoiced = 1 if flt(o.per_billed) > 0 or any(l["invoiced"] for l in o.lines) else 0
 		o.draft_invoices = drafts.get(o.name, [])
 		out.append(o)
-	return {"orders": out, "shares_skipped": len(share_orders)}
+	return {"orders": out}
 
 
 @frappe.whitelist()
 def create_invoice(sales_order, lines, submit=0):
 	"""One invoice for ``sales_order`` holding only ``lines`` ({so_detail: qty}).
 
-	Returns ``{"name", "status", "grand_total", "outstanding", "error"}``. A
-	failed submit leaves the draft in place and says why (no stock, …).
+	Returns ``{"name", "status", "grand_total", "outstanding",
+	"error"}``. A failed submit leaves the draft in place and says why (no
+	stock, …).
 	"""
 	from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
 
@@ -193,14 +205,22 @@ def create_invoice(sales_order, lines, submit=0):
 
 		# Re-check against the database: someone may have invoiced these lines
 		# since the lines were fetched.
-		invoiced = _invoiced_qty(list(lines))
+		invoiced = _invoiced_qty([row.name for row in so.items])
+		held_deposit = 0.0  # deposits of shares that stay on the order
 		for row in so.items:
-			if row.name not in lines:
-				continue
-			if is_share(row.item_code):
-				frappe.throw(_("Row {0}: {1} is a share; invoice it from the order.").format(row.idx, row.item_code))
 			done = invoiced.get(row.name, {})
 			pending = flt(row.qty) - flt(row.returned_qty) - flt(done.get("billed")) - flt(done.get("draft"))
+			share = is_share(row.item_code)
+			if share and pending > EPS:
+				held_deposit += flt(row.amount) / flt(row.qty) * pending
+			if row.name not in lines:
+				continue
+			if share:
+				frappe.throw(
+					_("Row {0} {1}: a share is invoiced from the order once the hanging weight is known.").format(
+						row.idx, row.item_code
+					)
+				)
 			if lines[row.name] > pending + EPS:
 				frappe.throw(
 					_("Row {0} {1}: only {2} left to invoice, {3} asked.").format(
@@ -222,6 +242,8 @@ def create_invoice(sales_order, lines, submit=0):
 		# at 0 and the whole amount outstanding. A second save counts them.
 		if si.advances:
 			si.save()
+		if si.advances and held_deposit > EPS:
+			_keep_share_deposits(si, held_deposit)
 		frappe.db.commit()
 	except Exception as e:
 		frappe.db.rollback()
@@ -241,6 +263,26 @@ def create_invoice(sales_order, lines, submit=0):
 			out["error"] = _("Saved as draft, not submitted: {0}").format(_message(e))
 	out.update(grand_total=flt(si.rounded_total or si.grand_total), outstanding=flt(si.outstanding_amount))
 	return out
+
+
+def _keep_share_deposits(si, held_deposit):
+	"""Leave the deposits of shares still to come unallocated on the order.
+
+	ERPNext takes every payment on the order off this invoice. A share not on
+	it yet keeps its deposit for its own invoice: only what was paid beyond
+	those deposits is applied here. Allocation is then fixed by hand (automatic
+	allocation would undo it on save).
+	"""
+	available = sum(flt(a.advance_amount) for a in si.advances)
+	allocated = sum(flt(a.allocated_amount) for a in si.advances)
+	left = min(allocated, max(available - held_deposit, 0))
+	if left >= allocated - EPS:
+		return
+	si.allocate_advances_automatically = 0
+	for a in si.advances:
+		a.allocated_amount = min(flt(a.advance_amount), left)
+		left -= a.allocated_amount
+	si.save()
 
 
 def _invoiced_qty(so_details):

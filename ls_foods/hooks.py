@@ -146,9 +146,12 @@ doc_events = {
 			"ls_foods.case_pricing.apply_per_lb_pricing",
 			"ls_foods.share_billing.sync_processing_rows",
 		],
+		# validate (after the controller has priced every line): a new share
+		#   invoice takes the order's deposit off (Advances), see share_billing.
 		"validate": [
 			"ls_foods.case_pricing.set_unit_price",
 			"ls_foods.case_pricing.warn_missing_case_weight",
+			"ls_foods.share_billing.apply_share_deposit",
 		],
 		"before_submit": "ls_foods.case_pricing.validate_zero_rate",
 	},

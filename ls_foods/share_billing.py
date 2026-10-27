@@ -89,6 +89,28 @@ def sync_processing_rows(doc, method=None):
 		row.idx = idx
 
 
+def apply_share_deposit(doc, method=None):
+	"""Sales Invoice ``validate`` — a new share invoice takes the deposit off.
+
+	The share is invoiced on its own, after the order's other items (Backorders
+	& Invoicing leaves its deposit on the order). Made from the order with
+	Create > Sales Invoice, the invoice would not pull the deposit in by itself
+	(automatic allocation is off), so on its first save the payments made on the
+	order are allocated here. It runs after the controller's validate, when the
+	share is re-priced and the processing line priced, and the totals are
+	worked out again with the advances in. Only once: whatever staff change on the Advances table
+	afterwards stays.
+	"""
+	if not doc.is_new() or doc.docstatus != 0 or doc.get("is_return") or doc.get("is_pos"):
+		return
+	if doc.get("advances") or cint(doc.get("allocate_advances_automatically")):
+		return
+	if not any(row.get("so_detail") and cint(row.get(PRICED_PER_LB_FIELD)) for row in doc.items):
+		return
+	doc.set_advances()
+	doc.calculate_taxes_and_totals()
+
+
 # ---------------------------------------------------------------------------
 # Deposit units (quarters / halves) — for the printed deposit line
 # ---------------------------------------------------------------------------
@@ -162,9 +184,12 @@ def invoice_view(doc):
 			)
 		)
 
+	held = held_shares(doc)
 	return frappe._dict(
 		shares=shares,
 		others=others,
+		held=held,
+		held_deposit=sum(h.deposit for h in held),
 		shares_total=sum(s.subtotal for s in shares),
 		shares_balance=sum(s.balance for s in shares),
 		deposits=sum(s.deposit for s in shares),
@@ -172,6 +197,53 @@ def invoice_view(doc):
 		# Cases + shares; a processing line's qty is pounds, not units.
 		total_units=sum(flt(r.qty) for r in doc.items if not r.get(SHARE_ITEM_FIELD)),
 	)
+
+
+def held_shares(doc):
+	"""Shares of the invoice's orders that are NOT on this invoice and not invoiced yet.
+
+	The Backorders & Invoicing screen invoices an order's other items first; the
+	share follows on its own invoice once the hanging weight is known. Its
+	deposit stays on the order meanwhile, and the first invoice's print says so.
+	"""
+	orders = list({r.sales_order for r in doc.items if r.get("sales_order")})
+	if not orders or doc.get("is_return"):
+		return []
+	rows = frappe.get_all(
+		"Sales Order Item",
+		filters={"parent": ["in", orders], "parenttype": "Sales Order"},
+		fields=["name", "parent", "item_code", "item_name", "qty", "returned_qty", "amount"],
+		order_by="parent asc, idx asc",
+	)
+	rows = [r for r in rows if r.item_code and cint(frappe.get_cached_value("Item", r.item_code, PRICED_PER_LB_FIELD))]
+	if not rows:
+		return []
+	on_this = {r.so_detail for r in doc.items if r.get("so_detail")}
+	taken = {}
+	for r in frappe.get_all(
+		"Sales Invoice Item",
+		filters={"so_detail": ["in", [r.name for r in rows]], "docstatus": ["<", 2], "parent": ["!=", doc.name or ""]},
+		fields=["so_detail", "qty"],
+	):
+		taken[r.so_detail] = taken.get(r.so_detail, 0) + flt(r.qty)
+
+	out = []
+	for r in rows:
+		if r.name in on_this:
+			continue
+		pending = flt(r.qty) - flt(r.returned_qty) - taken.get(r.name, 0)
+		if pending <= 0.0001:
+			continue
+		out.append(
+			frappe._dict(
+				sales_order=r.parent,
+				item_code=r.item_code,
+				item_name=r.item_name,
+				qty=pending,
+				deposit=flt(r.amount) / flt(r.qty) * pending if flt(r.qty) else 0,
+			)
+		)
+	return out
 
 
 def order_view(doc):

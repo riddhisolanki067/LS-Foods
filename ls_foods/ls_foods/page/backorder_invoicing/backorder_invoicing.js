@@ -10,6 +10,10 @@
 // Single lines can also be unticked, or their "To Invoice" lowered, in the
 // Order Lines table. Nothing is stored for a backorder: the line stays on its
 // order, still to be invoiced, and is listed here again until it is.
+//
+// Beef / hog shares are shown but never invoiced here: the order's other
+// items are, and the share is invoiced later from the order once the hanging
+// weight is known. The server leaves the share's deposit on the order.
 
 frappe.pages["backorder-invoicing"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -198,11 +202,10 @@ class LSBackorderInvoicing {
 			args,
 			callback: (r) => {
 				const res = r.message || {};
-				this.shares_skipped = res.shares_skipped || 0;
 				this.applied_items = [];
 				this.orders = (res.orders || []).map((o) => {
 					o.skip = false;
-					o.lines.forEach((l) => (l.to_invoice = l.pending));
+					o.lines.forEach((l) => (l.to_invoice = l.is_share ? 0 : l.pending));
 					return o;
 				});
 				this.bo_rows.forEach((row) => {
@@ -240,7 +243,7 @@ class LSBackorderInvoicing {
 	apply_backorders() {
 		const items = [...new Set(this.bo_rows.map((r) => r.item_code).filter(Boolean))];
 		(this.applied_items || []).filter((item) => !items.includes(item)).forEach((item) =>
-			this.item_lines(item).forEach(({ l }) => (l.to_invoice = l.pending))
+			this.item_lines(item).forEach(({ l }) => (l.to_invoice = l.is_share ? 0 : l.pending))
 		);
 		this.applied_items = items;
 		items.forEach((item) => this.item_lines(item).forEach(({ o, l }) => (l.to_invoice = o.skip ? l.pending : 0)));
@@ -252,9 +255,26 @@ class LSBackorderInvoicing {
 	// the goods are still to come.
 	invoice_lines(o) {
 		if (o.skip) return [];
-		const goods = o.lines.filter((l) => !l.is_fee && l.to_invoice > 0);
+		const going = o.lines.filter((l) => l.to_invoice > 0 && !l.is_share);
+		const goods = going.filter((l) => !l.is_fee);
 		if (o.lines.some((l) => !l.is_fee) && !goods.length) return [];
-		return o.lines.filter((l) => l.to_invoice > 0);
+		return going;
+	}
+
+	// Goods (not charges) of an order being invoiced that stay on the order.
+	// A share is not a backorder: it is always invoiced later, on its own.
+	is_held(o, l, inv) {
+		if (o.skip || l.is_fee || l.is_share) return false;
+		return !(inv || this.invoice_lines(o)).includes(l) || l.to_invoice < l.pending;
+	}
+
+	amount(l) {
+		return l.to_invoice * l.rate;
+	}
+
+	// Deposits of the order's shares: they stay on the order for the share's invoice.
+	held_deposit(o) {
+		return o.lines.filter((l) => l.is_share).reduce((s, l) => s + l.deposit_per_unit * l.pending, 0);
 	}
 
 	totals() {
@@ -263,8 +283,8 @@ class LSBackorderInvoicing {
 			const inv = this.invoice_lines(o);
 			if (inv.length) t.orders++;
 			t.lines += inv.length;
-			t.amount += inv.reduce((s, l) => s + l.to_invoice * l.rate, 0);
-			t.held += o.lines.filter((l) => !l.is_fee && l.to_invoice < l.pending).length;
+			t.amount += inv.reduce((s, l) => s + this.amount(l), 0);
+			t.held += o.lines.filter((l) => this.is_held(o, l, inv)).length;
 		});
 		return t;
 	}
@@ -293,9 +313,7 @@ class LSBackorderInvoicing {
 			])
 		);
 		this.$tools.html(
-			`${__("{0} open orders", [this.orders.length])}${this.only_orders ? ` · ${__("only the orders ticked in the list")}` : ""}${
-				this.shares_skipped ? ` · ${__("{0} order(s) with a beef/hog share not shown — invoice those from the order", [this.shares_skipped])}` : ""
-			} · <a data-action="all">${__("Select all")}</a> · <a data-action="none">${__("Select none")}</a> · <a data-action="held">${
+			`${__("{0} open orders", [this.orders.length])}${this.only_orders ? ` · ${__("only the orders ticked in the list")}` : ""} · <a data-action="all">${__("Select all")}</a> · <a data-action="none">${__("Select none")}</a> · <a data-action="held">${
 				this.only_held ? __("Show all orders") : __("Show only orders with backorders")
 			}</a>`
 		);
@@ -304,7 +322,7 @@ class LSBackorderInvoicing {
 			return;
 		}
 		const body = this.orders
-			.filter((o) => !this.only_held || o.lines.some((l) => !l.is_fee && l.to_invoice < l.pending))
+			.filter((o) => !this.only_held || o.lines.some((l) => this.is_held(o, l)))
 			.map((o) => this.order_rows(o))
 			.join("");
 		this.$lines.html(`<table class="table table-bordered table-sm lsbo-lines">
@@ -324,8 +342,10 @@ class LSBackorderInvoicing {
 
 	order_rows(o) {
 		const inv = this.invoice_lines(o);
-		const amount = inv.reduce((s, l) => s + l.to_invoice * l.rate, 0);
+		const amount = inv.reduce((s, l) => s + this.amount(l), 0);
 		const notes = [];
+		const kept = inv.length ? this.held_deposit(o) : 0;
+		if (kept > 0.005) notes.push(`<span class="lsbo-red-text">${__("share deposit {0} stays on the order", [format_currency(kept, o.currency)])}</span>`);
 		if (o.partly_invoiced) notes.push(__("partly invoiced"));
 		(o.draft_invoices || []).forEach((n) =>
 			notes.push(`<a href="/app/sales-invoice/${encodeURIComponent(n)}" target="_blank">${__("draft invoice {0}", [esc(n)])}</a>`)
@@ -343,21 +363,29 @@ class LSBackorderInvoicing {
 		</tr>`;
 		const lines = o.lines
 			.map((l) => {
-				const held = l.is_fee ? 0 : flt(l.pending - l.to_invoice, 6);
-				const off = o.skip ? "disabled" : "";
+				const going = o.skip || inv.includes(l);
+				const held = this.is_held(o, l, inv) ? flt(l.pending - (going ? l.to_invoice : 0), 6) : 0;
+				const off = o.skip || l.is_share ? "disabled" : "";
 				return `<tr data-order="${esc(o.name)}" data-line="${esc(l.so_detail)}" class="${held > 0 ? "lsbo-held" : ""} ${o.skip ? "lsbo-skip" : ""}">
 					<td><input type="checkbox" class="lsbo-line-check" ${l.to_invoice > 0 ? "checked" : ""} ${off}></td>
 					<td>${esc(l.item_code)}</td>
-					<td>${esc(l.item_name)}${l.is_fee ? ` <span class="lsbo-muted">(${__("charge")})</span>` : ""}</td>
+					<td>${esc(l.item_name)}${l.is_fee ? ` <span class="lsbo-muted">(${__("charge")})</span>` : ""}${l.is_share ? this.share_cell(l, o) : ""}</td>
 					<td class="text-right">${fmt_qty(l.qty)} <span class="lsbo-muted">${esc(l.uom || "")}</span></td>
 					<td class="text-right">${l.invoiced ? fmt_qty(l.invoiced) : ""}</td>
 					<td class="text-right"><input type="number" class="form-control input-xs lsbo-line-qty" min="0" max="${l.pending}" step="any" value="${l.to_invoice}" ${off}></td>
-					<td class="text-right">${held > 0 ? `<span class="lsbo-red-text">${fmt_qty(held)}</span>` : ""}</td>
-					<td class="text-right">${format_currency(l.to_invoice * l.rate, o.currency)}</td>
+					<td class="text-right">${held > 0 ? `<span class="lsbo-red-text">${fmt_qty(held)}</span>` : l.is_share ? `<span class="lsbo-muted">${__("later")}</span>` : ""}</td>
+					<td class="text-right">${going ? format_currency(this.amount(l), o.currency) : ""}</td>
 				</tr>`;
 			})
 			.join("");
 		return head + lines;
+	}
+
+	share_cell(l, o) {
+		return `<div class="lsbo-share lsbo-muted">${__(
+			"Invoiced later from the order, once the hanging weight is known. Deposit {0} stays on the order.",
+			[format_currency(l.deposit_per_unit * l.pending, o.currency)]
+		)}</div>`;
 	}
 
 	// ---------------------------------------------------------------- create
@@ -487,6 +515,7 @@ class LSBackorderInvoicing {
 			.lsbo-lines tr.lsbo-held td { background: var(--red-50, #fff5f5); }
 			.lsbo-lines tr.lsbo-skip td { opacity: .5; }
 			.lsbo-line-qty { width: 80px; display: inline-block; text-align: right; }
+			.lsbo-share { margin-top: 2px; font-size: var(--text-sm); }
 			.lsbo-empty { padding: 40px; text-align: center; color: var(--text-muted); }
 			@media (max-width: 768px) { .lsbo-lines, .lsbo-bo { display: block; overflow-x: auto; } }
 		</style>`).appendTo("head");
