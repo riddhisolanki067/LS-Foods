@@ -1,3 +1,4 @@
+# 2026-10-28: Pound-UOM items skip per-lb pricing; share processing line added blank (qty + rate typed by staff).
 app_name = "ls_foods"
 app_title = "Ls Foods"
 app_publisher = "Riddhi"
