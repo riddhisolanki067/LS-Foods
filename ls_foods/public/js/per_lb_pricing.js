@@ -91,16 +91,8 @@ window.ls_foods_per_lb = {
 		if (!weight) return true;
 
 		frappe.model.set_value(cdt, cdn, "price_list_rate", per_lb * weight);
-		ls_foods_per_lb.sync_processing(frm, row, weight);
+		// The processing line under a share is NOT touched: staff type its qty
+		// and rate from the processor's bill (share_billing.sync_processing_rows).
 		return true;
-	},
-
-	// The processing line under a share (custom_share_item) follows its weight.
-	// The server does the same on save and adds the line if it is missing.
-	sync_processing(frm, row, weight) {
-		const fee = (frm.doc.items || []).find(
-			(r) => r.custom_share_item && r.custom_share_item === row.item_code && r.idx > row.idx
-		);
-		if (fee) frappe.model.set_value(fee.doctype, fee.name, "qty", flt(row.qty) * weight);
 	},
 };

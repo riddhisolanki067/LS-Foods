@@ -77,6 +77,11 @@ PER_LB_PRICE_LIST = "Per Pound"
 
 NATIVE_WEIGHT_FIELD = "weight_per_unit"
 
+# Items stocked in one of these are already sold by weight (or by a fixed-price
+# block labelled in pounds, e.g. ".7 lb." cheese at $8.50): their Standard
+# Selling price is the final rate and must never be multiplied by a weight.
+WEIGHT_UOMS = ("Pound", "Lb", "Lbs")
+
 
 def mirror_case_weight(doc, method=None):
 	"""``before_validate`` — keep Case Weight (lb) and ``weight_per_unit`` as one number.
@@ -115,8 +120,15 @@ def price_per_lb(item_code, customer=None, on_date=None):
 
 	A customer-specific Per Pound price wins over the general one; validity dates
 	are honoured.
+
+	Items whose stock UOM is a weight unit always return 0, even with a Per
+	Pound price on file: $/lb x weight only means something when the unit is a
+	case of varying weight. Without this guard the Pound-stocked cheese and
+	butter were charged $8.50 x 0.6 = $5.10 a block (2026-10-28, invoice 1249).
 	"""
 	if not item_code:
+		return 0.0
+	if frappe.get_cached_value("Item", item_code, "stock_uom") in WEIGHT_UOMS:
 		return 0.0
 	cache_key = ("ls_foods_price_per_lb", item_code, customer or "", str(on_date or ""))
 	cached = frappe.local.cache.get(cache_key) if hasattr(frappe.local, "cache") else None
@@ -212,6 +224,11 @@ def apply_per_lb_pricing(doc, method=None):
 		price = flt(per_lb * weight, row.precision("price_list_rate"))
 		row.price_list_rate = price
 		row.rate = flt(price * (1 - flt(row.discount_percentage) / 100), row.precision("rate"))
+
+
+def is_priced_per_lb(item_code, customer=None, on_date=None):
+	"""Jinja: does this line's rate come from $/lb x weight? (print formats)"""
+	return bool(price_per_lb(item_code, customer, on_date))
 
 
 @frappe.whitelist()

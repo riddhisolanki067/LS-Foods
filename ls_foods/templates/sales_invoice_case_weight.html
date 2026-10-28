@@ -237,9 +237,10 @@
       {%- if s.fee %}
       <tr class="share-line">
         <td>{{ s.fee.item_name }}</td>
+        {#- Qty and rate are typed from the processor's bill — print them as entered, in the line's own unit. #}
         <td class="num">{{ frappe.format(s.fee.qty, {"fieldtype": "Float"}) }}</td>
-        <td>{{ _("Pounds") }}</td>
-        <td class="num">{{ frappe.format_value(s.fee.rate, {"fieldtype": "Currency"}, doc) }}<span class="sub"> /lb</span></td>
+        <td>{{ s.fee.uom }}</td>
+        <td class="num">{{ frappe.format_value(s.fee.rate, {"fieldtype": "Currency"}, doc) }}</td>
         <td class="num">{{ frappe.format_value(s.fee.amount, {"fieldtype": "Currency"}, doc) }}</td>
       </tr>
       {%- endif %}
@@ -270,7 +271,7 @@
         <td>
           {{ row.item_name }}
           {#- Priced by the pound: the weight is what sets the price, so show it. #}
-          {%- if row.custom_unit_price and row.custom_case_weight and frappe.db.exists("Item Price", {"item_code": row.item_code, "price_list": "Per Pound", "selling": 1}) %}
+          {%- if row.custom_unit_price and row.custom_case_weight and is_priced_per_lb(row.item_code, doc.customer, doc.posting_date) %}
           <div class="sub">{{ frappe.format(row.custom_case_weight, {"fieldtype": "Float"}) }} lb @ {{ frappe.format_value(row.custom_unit_price, {"fieldtype": "Currency"}, doc) }}/lb</div>
           {%- endif %}
         </td>

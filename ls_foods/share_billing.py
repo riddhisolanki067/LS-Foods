@@ -18,7 +18,7 @@ How that maps onto standard ERPNext
 - On the invoice made from that order, the same line is re-priced by weight
   (``case_pricing.apply_per_lb_pricing``) — it becomes the hanging-weight
   charge — and :func:`sync_processing_rows` adds the processing line right
-  under it. The deposit comes off as the advance (Get Advances), so the invoice
+  under it, blank: staff type its qty and rate from the processor's bill. The deposit comes off as the advance (Get Advances), so the invoice
   is simply part-paid.
 - Nothing is billed twice: the deposit is money received, not a sales line.
 
@@ -27,6 +27,7 @@ formats, which lay it out like the client's item build sheet.
 """
 
 import frappe
+from frappe import _
 from frappe.utils import cint, flt
 
 from ls_foods.case_pricing import CASE_WEIGHT_FIELD, NATIVE_WEIGHT_FIELD, PRICED_PER_LB_FIELD
@@ -49,11 +50,14 @@ SHARE_UNITS = {
 def sync_processing_rows(doc, method=None):
 	"""Sales Invoice ``before_validate`` — one processing line under each share line.
 
-	Qty = share qty x hanging weight (lb), so the fee always follows the weight
-	that was typed. A processing line keeps any rate typed on it (hog processing
-	runs $1-$2/lb); a new one takes the fee item's price-list rate. Lines whose
-	share has been removed are dropped. Runs after ``apply_per_lb_pricing`` so
-	the share's weight is settled.
+	A new processing line comes in BLANK — no qty, no rate — and staff type both
+	from the processor's bill (client's call, 2026-10-28: the fee is not a fixed
+	$/lb and weight x rate never matched the bill to the cent). Whatever is typed
+	is never recalculated. Lines whose share has been removed are dropped.
+
+	ERPNext refuses a zero-qty line on save, so the check is lifted while the
+	only zero-qty lines are processing lines; :func:`validate_processing_rows`
+	makes sure they are filled in before submit.
 	"""
 	rows = doc.get("items") or []
 	existing = {}
@@ -73,20 +77,52 @@ def sync_processing_rows(doc, method=None):
 		if not fee_item:
 			continue
 
-		weight = flt(row.get(CASE_WEIGHT_FIELD)) or flt(row.get(NATIVE_WEIGHT_FIELD))
 		matches = existing.get(row.item_code) or []
 		fee = matches.pop(0) if matches else None
 		if not fee:
-			fee = doc.append("items", {"item_code": fee_item, SHARE_ITEM_FIELD: row.item_code})
+			# price_list_rate / rate set to 0 (not None) so the controller's
+			# get_item_details does not fill in the fee item's list price.
+			fee = doc.append(
+				"items",
+				{
+					"item_code": fee_item,
+					SHARE_ITEM_FIELD: row.item_code,
+					"qty": 0,
+					"price_list_rate": 0,
+					"rate": 0,
+				},
+			)
 			doc.items.remove(fee)
 			fee.warehouse = row.warehouse
 			fee.cost_center = row.cost_center
-		fee.qty = flt(row.qty) * weight
 		ordered.append(fee)
 
 	doc.items = ordered
 	for idx, row in enumerate(doc.items, start=1):
 		row.idx = idx
+
+	# Lift ERPNext's zero-qty check only while every zero-qty line is a blank
+	# processing line; undo our own lift on the next save if that stops being true.
+	if doc.flags.get("ls_processing_zero_qty"):
+		doc.flags.allow_zero_qty = doc.flags.ls_processing_zero_qty = False
+	zero_qty = [row for row in doc.items if not flt(row.qty)]
+	if zero_qty and all(row.get(SHARE_ITEM_FIELD) for row in zero_qty):
+		doc.flags.allow_zero_qty = doc.flags.ls_processing_zero_qty = True
+
+
+def validate_processing_rows(doc, method=None):
+	"""Sales Invoice ``before_submit`` — a processing line must have its qty and rate typed in."""
+	blank = [row for row in doc.items if row.get(SHARE_ITEM_FIELD) and not (flt(row.qty) and flt(row.rate))]
+	if not blank:
+		return
+	rows = "<br>".join(
+		_("Row {0}: {1} (Qty {2}, Rate {3})").format(row.idx, frappe.bold(row.item_code), flt(row.qty), flt(row.rate))
+		for row in blank
+	)
+	frappe.throw(
+		_("Enter the processing Qty and Rate from the processor's bill before submitting.") + f"<br><br>{rows}",
+		title=_("Processing not filled in"),
+	)
 
 
 def apply_share_deposit(doc, method=None):

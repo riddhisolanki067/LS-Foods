@@ -139,7 +139,8 @@ doc_events = {
 		#   BEFORE the controller runs, so ERPNext's own maths produces Line
 		#   Weight and Total Weight (lb). Nothing here recalculates them.
 		#   Then price per-lb items (beef shares): Rate = Unit Price x Case Weight,
-		#   and keep one processing line (weight x fee) under each share.
+		#   and keep one processing line under each share (added blank; staff
+		#   type its qty + rate, checked before submit).
 		#   See ls_foods/share_billing.py.
 		"before_validate": [
 			"ls_foods.case_pricing.mirror_case_weight",
@@ -153,7 +154,10 @@ doc_events = {
 			"ls_foods.case_pricing.warn_missing_case_weight",
 			"ls_foods.share_billing.apply_share_deposit",
 		],
-		"before_submit": "ls_foods.case_pricing.validate_zero_rate",
+		"before_submit": [
+			"ls_foods.case_pricing.validate_zero_rate",
+			"ls_foods.share_billing.validate_processing_rows",
+		],
 	},
 	# Sales Order: items with a Per Pound price are priced $/lb x case weight
 	#   (estimated weight until invoiced). A beef/hog share stays at its price-list
@@ -277,6 +281,7 @@ jinja = {
 	"methods": [
 		"ls_foods.share_billing.invoice_view",
 		"ls_foods.share_billing.order_view",
+		"ls_foods.case_pricing.is_priced_per_lb",
 	],
 }
 # jinja = {
