@@ -2,20 +2,6 @@
 // of their invoices in that order (see delivery_route.py).
 
 frappe.ui.form.on("Delivery Route", {
-	setup(frm) {
-		// Only the order's own invoices can be picked on a stop.
-		frm.set_query("sales_invoice", "stops", (doc, cdt, cdn) => {
-			const row = locals[cdt][cdn];
-			return {
-				filters: [
-					["Sales Invoice Item", "sales_order", "=", row.sales_order || ""],
-					["Sales Invoice", "docstatus", "<", 2],
-					["Sales Invoice", "is_return", "=", 0],
-				],
-			};
-		});
-	},
-
 	refresh(frm) {
 		// The stops follow the pasted list: rows are not added or removed by hand.
 		frm.set_df_property("stops", "cannot_add_rows", true);
@@ -44,8 +30,9 @@ function download_pdf(frm) {
 		});
 		window.open(url);
 	};
-	// Unsaved paste or ticks: save first so the PDF matches the screen.
-	frm.is_dirty() ? frm.save().then(go) : go();
+	// Always save first: the save picks up invoices made since the last one
+	// (a backorder invoice), and the PDF matches the screen.
+	frm.save().then(go);
 }
 
 // A route for this date and vehicle already exists: replace its list there.
@@ -103,17 +90,4 @@ function render_check(frm) {
 
 frappe.ui.form.on("Delivery Route Stop", {
 	print_invoice: render_check,
-	sales_invoice(frm, cdt, cdn) {
-		const row = locals[cdt][cdn];
-		if (!row.sales_invoice) return;
-		frappe.db
-			.get_value("Sales Invoice", row.sales_invoice, ["docstatus", "grand_total", "rounded_total"])
-			.then(({ message: si }) => {
-				frappe.model.set_value(cdt, cdn, {
-					invoice_status: si.docstatus == 1 ? __("Submitted") : __("Draft"),
-					grand_total: si.rounded_total || si.grand_total,
-				});
-				render_check(frm);
-			});
-	},
 });

@@ -78,9 +78,10 @@
     against it after submit, each once. Check # is the cheque number; a payment
     made any other way shows its mode (Cash, …).
     For each one: Amount = the whole cheque, Applied = the part used on this
-    invoice, Credit = what is left of the cheque after this invoice and any
-    other submitted invoice it has paid (e.g. paid for a whole order, invoiced
-    in part — the rest stays as credit on the order). #}
+    invoice, Credit = what is left of the cheque after this invoice and the
+    invoices made before it (e.g. paid for a whole order, invoiced in part —
+    the rest stays as credit on the order, and the backorder invoice shows
+    only that rest). #}
 {%- set pay = namespace(seen=[], paid=0, applied=0, credit=0) %}
 {%- set payments = [] %}
 {#- A share still to come keeps its deposit on the order, so its cheque may be
@@ -97,17 +98,41 @@
     {%- endif %}
   {%- endfor %}
 {%- endif %}
+{#- The order's other invoices made before this one (not cancelled, not returns). #}
+{%- set earlier = [["docstatus", "<", 2], ["is_return", "=", 0], ["name", "!=", doc.name or ""]] + ([["creation", "<", doc.creation]] if doc.creation else []) %}
 {%- for p in payments %}
   {%- set pe = frappe.db.get_value(p.type, p.name, "name") %}
   {%- if not pe %}{% set _ = p.update({"missing": 1, "paid": 0, "credit": 0, "check": p.name, "date": None}) %}
   {%- elif p.type == "Payment Entry" %}
     {%- set pe = frappe.db.get_value("Payment Entry", p.name, ["mode_of_payment", "reference_no", "reference_date", "posting_date", "paid_amount"], as_dict=1) %}
-    {#- Used on other submitted invoices (this one excluded, it is p.applied). #}
-    {%- set other = frappe.get_all("Payment Entry Reference", filters={"parent": p.name, "reference_doctype": "Sales Invoice", "reference_name": ["!=", doc.name], "docstatus": 1}, fields=["allocated_amount"]) | sum(attribute="allocated_amount") %}
+    {#- Used on the order's EARLIER invoices (created before this one, draft or
+        submitted; this one excluded, it is p.applied). A backorder invoice
+        then shows only what the first invoice left of the cheque, or 0.
+        Drafts count because every invoice is a draft until it is submitted:
+        the cheque's own references only know submitted ones. A submitted
+        invoice has both an advance row and a reference row for the same
+        money, so per invoice the larger of the two is taken, not the sum. #}
+    {%- set used = {} %}
+    {%- for a in frappe.get_all("Sales Invoice", filters=earlier + [["Sales Invoice Advance", "reference_name", "=", p.name]], fields=["name", "`tabSales Invoice Advance`.allocated_amount as allocated"]) %}
+      {%- set _ = used.update({a.name: (used.get(a.name) or 0) + a.allocated}) %}
+    {%- endfor %}
+    {%- set by_ref = {} %}
+    {%- for r in frappe.get_all("Payment Entry Reference", filters={"parent": p.name, "reference_doctype": "Sales Invoice", "reference_name": ["!=", doc.name], "docstatus": 1}, fields=["reference_name", "allocated_amount"]) %}
+      {%- set _ = by_ref.update({r.reference_name: (by_ref.get(r.reference_name) or 0) + r.allocated_amount}) %}
+    {%- endfor %}
+    {%- if by_ref %}
+      {%- for inv in frappe.get_all("Sales Invoice", filters=earlier + [["name", "in", by_ref.keys() | list]], pluck="name") %}
+        {%- set _ = used.update({inv: [used.get(inv) or 0, by_ref[inv]] | max}) %}
+      {%- endfor %}
+    {%- endif %}
+    {%- set other = used.values() | sum %}
     {%- set _ = p.update({"paid": pe.paid_amount, "credit": [pe.paid_amount - other - p.applied, 0] | max}) %}
   {%- else %}
     {%- set pe = frappe.db.get_value("Journal Entry", p.name, ["cheque_no as reference_no", "cheque_date as reference_date", "posting_date"], as_dict=1) %}
-    {%- set _ = p.update({"paid": p.available, "credit": [p.available - p.applied, 0] | max}) %}
+    {#- A journal's advance amount already leaves out what submitted invoices
+        took; earlier DRAFT invoices still have to come off. #}
+    {%- set other = frappe.get_all("Sales Invoice", filters=earlier + [["docstatus", "=", 0], ["Sales Invoice Advance", "reference_name", "=", p.name]], fields=["`tabSales Invoice Advance`.allocated_amount as allocated"]) | sum(attribute="allocated") %}
+    {%- set _ = p.update({"paid": p.available, "credit": [p.available - other - p.applied, 0] | max}) %}
   {%- endif %}
   {%- if not p.missing %}{% set _ = p.update({"check": pe.reference_no or pe.mode_of_payment or "", "date": pe.reference_date or pe.posting_date}) %}{% endif %}
   {%- set pay.paid = pay.paid + p.paid %}

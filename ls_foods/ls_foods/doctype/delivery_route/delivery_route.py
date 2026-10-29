@@ -11,10 +11,12 @@ changes, the new list is pasted over the old one on the same record; that is
 what the old screen's "All deliveries scheduled for this date will be deleted!"
 did, without anything being deleted here.
 
-Which invoice: the order's latest invoice that is not cancelled and not a
-return, draft or submitted (the delivery is usually invoiced just before the
-truck leaves). An order with several invoices (backorders) keeps whichever
-invoice staff picked on the row, as long as it still belongs to the order.
+Which invoice: the order's last CREATED invoice that is not cancelled and not
+a return, draft or submitted. An order with several invoices (backorders: the
+first invoice went out earlier, the later one carries what was held back) prints
+only that last one. Creation, not posting date: a draft's posting date moves to
+the day it is opened again, so an old draft can look newer than the backorder
+invoice. The stops are rebuilt on every save, so a new invoice is picked up.
 """
 
 import re
@@ -50,7 +52,7 @@ class DeliveryRoute(Document):
 		self.build_stops(orders)
 
 	def build_stops(self, orders):
-		"""Rebuild the stops from the pasted list, keeping invoice picks and Print ticks."""
+		"""Rebuild the stops from the pasted list, keeping the Print ticks."""
 		kept = {s.sales_order: s for s in self.stops if s.sales_order and s.sales_invoice}
 		seen_orders, seen_invoices = {}, {}
 		self.stops = []
@@ -74,7 +76,7 @@ class DeliveryRoute(Document):
 				continue
 
 			prev = kept.get(so.name)
-			chosen = next((i for i in invoices if prev and i.name == prev.sales_invoice), invoices[0])
+			chosen = invoices[0]
 			stop.sales_invoice = chosen.name
 			stop.invoice_status = _("Submitted") if chosen.docstatus == 1 else _("Draft")
 			stop.grand_total = flt(chosen.rounded_total or chosen.grand_total)
@@ -82,7 +84,7 @@ class DeliveryRoute(Document):
 
 			notes = [note] if note else []
 			if len(invoices) > 1:
-				notes.append(_("{0} invoices on this order").format(len(invoices)))
+				notes.append(_("{0} invoices on this order, printing the last one").format(len(invoices)))
 			if chosen.name in seen_invoices:
 				# One invoice covering two listed orders is printed once.
 				stop.print_invoice = 0
@@ -124,7 +126,7 @@ def resolve_order(name):
 
 
 def order_invoices(sales_order):
-	"""The order's invoices that can go on the truck, latest first."""
+	"""The order's invoices that can go on the truck, last created first."""
 	parents = frappe.get_all(
 		"Sales Invoice Item",
 		filters={"sales_order": sales_order, "parenttype": "Sales Invoice", "docstatus": ["<", 2]},
@@ -137,7 +139,7 @@ def order_invoices(sales_order):
 		"Sales Invoice",
 		filters={"name": ["in", parents], "docstatus": ["<", 2], "is_return": 0},
 		fields=["name", "docstatus", "grand_total", "rounded_total"],
-		order_by="posting_date desc, creation desc",
+		order_by="creation desc",
 	)
 
 
