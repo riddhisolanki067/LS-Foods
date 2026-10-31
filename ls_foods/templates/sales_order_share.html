@@ -33,6 +33,8 @@
     <tr>
       <td style="width:60%">
         <div style="font-size:13pt;font-weight:700">{{ doc.company }}</div>
+         {%- set project_name = doc.project and frappe.db.get_value("Project", doc.project, "project_name") %}
+         {%- if project_name %}<div style="font-size:13pt;">{{ project_name }}</div>{% endif %}
          <div style="font-size:13pt;">{{ doc.custom_pick_up_location }}</div>
         {% if doc.company_address_display %}<div class="muted">{{ doc.company_address_display }}</div>{% endif %}
       </td>

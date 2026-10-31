@@ -7,6 +7,7 @@
       LS Foods                                          Invoice / Date / Order
       [ Bill To: name, billing address, phone ]  <- sits in the envelope window
                                                          Ship To (right)
+      Project
       Delivery Location
       Product Code | Description | Quantity | Price | Item Total
       Order Notes (left)                     Free Dairy/Pizza, Subtotal,
@@ -218,6 +219,12 @@
   </table>
 
   <table class="meta" style="margin-top:6px">
+    {%- set project_name = doc.project and frappe.db.get_value("Project", doc.project, "project_name") %}
+    {%- if project_name %}
+    <tr>
+      <td><span class="lbl">{{ _("Project") }}:</span> {{ project_name }}</td>
+    </tr>
+    {%- endif %}
     <tr>
       <td>{% if location.name %}<span class="lbl">{{ _("Delivery Location") }}:</span> {{ location.name }}{% endif %}</td>
     </tr>

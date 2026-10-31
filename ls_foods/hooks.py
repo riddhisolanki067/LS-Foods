@@ -160,6 +160,11 @@ doc_events = {
 			"ls_foods.share_billing.validate_processing_rows",
 		],
 	},
+	# Purchase Invoice: each line shows the supplier's part number, from the Item's
+	#   Suppliers table. See ls_foods/supplier_part.py.
+	"Purchase Invoice": {
+		"before_validate": "ls_foods.supplier_part.set_supplier_part_no",
+	},
 	# Sales Order: items with a Per Pound price are priced $/lb x case weight
 	#   (estimated weight until invoiced). A beef/hog share stays at its price-list
 	#   price — the FIXED deposit — and Deposit Due totals those lines.

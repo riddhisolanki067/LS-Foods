@@ -15,7 +15,9 @@
   "column_break_orders",
   "route_check",
   "stops_section",
-  "stops"
+  "stops",
+  "invoice_choices_section",
+  "invoice_choices"
  ],
  "fields": [
   {
@@ -84,10 +86,23 @@
    "fieldtype": "Table",
    "label": "Stops",
    "options": "Delivery Route Stop"
+  },
+  {
+   "fieldname": "invoice_choices_section",
+   "fieldtype": "Section Break",
+   "label": "Orders With Several Invoices",
+   "depends_on": "eval:(doc.invoice_choices || []).length",
+   "description": "Tick the invoice(s) to include for each of these orders. Nothing is ticked for you: the PDF will not download until each order has a choice, or its Print is unticked above."
+  },
+  {
+   "fieldname": "invoice_choices",
+   "fieldtype": "Table",
+   "label": "Invoices",
+   "options": "Delivery Route Invoice"
   }
  ],
  "links": [],
- "modified": "2026-10-24 10:00:00.000000",
+ "modified": "2026-10-31 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ls Foods",
  "name": "Delivery Route",

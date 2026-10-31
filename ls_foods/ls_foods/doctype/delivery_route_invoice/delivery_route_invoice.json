@@ -1,0 +1,87 @@
+{
+ "actions": [],
+ "creation": "2026-10-31 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "sales_order",
+  "customer_name",
+  "sales_invoice",
+  "created_on",
+  "invoice_status",
+  "grand_total",
+  "include"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Customer",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Invoice",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "created_on",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Created",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "invoice_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "grand_total",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "fieldname": "include",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Include"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-31 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ls Foods",
+ "name": "Delivery Route Invoice",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
