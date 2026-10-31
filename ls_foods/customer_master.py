@@ -99,6 +99,7 @@ ADDRESS_MAP = {
 
 PHONE_MAP = {
 	"phone": "phone",
+	"custom_type": "custom_type",
 	"is_primary_phone": "is_primary_phone",
 	"custom_ext": "custom_ext",
 	"custom_current": "custom_current",
@@ -108,6 +109,7 @@ PHONE_MAP = {
 
 EMAIL_MAP = {
 	"email_id": "email_id",
+	"custom_type": "custom_type",
 	"is_primary": "is_primary",
 	"custom_current": "custom_current",
 	"custom_notes": "custom_notes",

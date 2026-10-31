@@ -34,6 +34,7 @@ from ls_foods.customer_master import (
 MODULE = "Ls Foods"
 
 NOTIFY_OPTIONS = "\nText\nCall\nEmail"
+CONTACT_TYPE_OPTIONS = "\nLandline\nMobile Phone\nFax"
 
 CUSTOM_FIELDS = {
 	"Customer": [
@@ -142,6 +143,16 @@ CUSTOM_FIELDS = {
 	],
 	"Contact Phone": [
 		{
+			"fieldname": "custom_type",
+			"label": "Type",
+			"fieldtype": "Select",
+			"options": CONTACT_TYPE_OPTIONS,
+			"insert_after": "phone",
+			"in_list_view": 1,
+			"columns": 2,
+			"module": MODULE,
+		},
+		{
 			"fieldname": "custom_ext",
 			"label": "Ext",
 			"fieldtype": "Data",
@@ -173,6 +184,16 @@ CUSTOM_FIELDS = {
 		},
 	],
 	"Contact Email": [
+		{
+			"fieldname": "custom_type",
+			"label": "Type",
+			"fieldtype": "Select",
+			"options": CONTACT_TYPE_OPTIONS,
+			"insert_after": "email_id",
+			"in_list_view": 1,
+			"columns": 2,
+			"module": MODULE,
+		},
 		{
 			"fieldname": "custom_current",
 			"label": "Current",
