@@ -68,11 +68,12 @@ CASE_UOM = "Case"
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
-# (print format, doctype, template file). The Sales Order format lays shares out
-# like the client's item build sheet; see ls_foods/share_billing.py.
+# (print format, doctype, template file). Invoice and order share one template
+# so they always look the same (client task TASK-2026-00032); each is the
+# default format of its doctype. Shares: see ls_foods/share_billing.py.
 PRINT_FORMATS = [
-	("LS Foods Invoice", "Sales Invoice", "sales_invoice_case_weight.html"),
-	("LS Foods Order", "Sales Order", "sales_order_share.html"),
+	("LS Foods Invoice", "Sales Invoice", "sales_document.html"),
+	("LS Foods Order", "Sales Order", "sales_document.html"),
 ]
 
 CASE_WEIGHT_LABEL = "Case Weight (lb)"
@@ -400,3 +401,6 @@ def install_print_format():
 				"html": html,
 			}
 		).insert(ignore_permissions=True)
+
+	for name, doctype, _template in PRINT_FORMATS:
+		make_property_setter(doctype, None, "default_print_format", name, "Data", for_doctype=True)

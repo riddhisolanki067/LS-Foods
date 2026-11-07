@@ -147,39 +147,63 @@ doc_events = {
 			"ls_foods.case_pricing.mirror_case_weight",
 			"ls_foods.case_pricing.apply_per_lb_pricing",
 			"ls_foods.share_billing.sync_processing_rows",
+			"ls_foods.order_address.keep_typed_address",
 		],
 		# validate (after the controller has priced every line): a new share
 		#   invoice takes the order's deposit off (Advances), see share_billing.
+		#   Billing / shipping address text typed by hand survives the save, and
+		#   the address can be changed after submit: see order_address.
 		"validate": [
 			"ls_foods.case_pricing.set_unit_price",
 			"ls_foods.case_pricing.warn_missing_case_weight",
 			"ls_foods.share_billing.apply_share_deposit",
+			"ls_foods.order_address.restore_typed_address",
 		],
+		"before_update_after_submit": "ls_foods.order_address.update_after_submit",
+		# before_insert: fields from the Sales Order left empty (order_to_invoice).
+		"before_insert": "ls_foods.order_to_invoice.fill_from_order",
 		"before_submit": [
 			"ls_foods.case_pricing.validate_zero_rate",
 			"ls_foods.share_billing.validate_processing_rows",
 		],
 	},
-	# Purchase Invoice: each line shows the supplier's part number, from the Item's
-	#   Suppliers table. See ls_foods/supplier_part.py.
-	"Purchase Invoice": {
-		"before_validate": "ls_foods.supplier_part.set_supplier_part_no",
+	# Buying documents: every line can be entered by Item Code or by Supplier Part
+	#   Number; the saved part number is always the one on the Item's Suppliers
+	#   table. See ls_foods/supplier_part.py.
+	**{
+		dt: {"before_validate": "ls_foods.supplier_part.set_supplier_part_no"}
+		for dt in (
+			"Material Request",
+			"Request for Quotation",
+			"Supplier Quotation",
+			"Purchase Order",
+			"Purchase Receipt",
+			"Purchase Invoice",
+		)
+	},
+	# ToDo: a Task's assignee gets read / write / share on it (task_access).
+	"ToDo": {
+		"on_update": "ls_foods.task_access.share_with_assignee",
 	},
 	# Sales Order: items with a Per Pound price are priced $/lb x case weight
 	#   (estimated weight until invoiced). A beef/hog share stays at its price-list
 	#   price — the FIXED deposit — and Deposit Due totals those lines.
 	#   The item grid matches the invoice's — Case Weight (lb), Unit Price, Line
 	#   Weight (lb) — so the same weight and unit-price hooks run here.
+	#   Billing / shipping address: editable, also after submit (order_address).
 	"Sales Order": {
 		"before_validate": [
 			"ls_foods.case_pricing.mirror_case_weight",
 			"ls_foods.case_pricing.apply_per_lb_pricing",
+			"ls_foods.order_address.keep_typed_address",
 		],
 		"validate": [
 			"ls_foods.case_pricing.set_unit_price",
 			"ls_foods.case_pricing.warn_missing_case_weight",
 			"ls_foods.share_deposit.set_deposit_due",
+			"ls_foods.order_address.restore_typed_address",
 		],
+		"before_update_after_submit": "ls_foods.order_address.update_after_submit",
 	},
 }
 
@@ -204,7 +228,7 @@ after_migrate = [
 	# Idempotent. Runs on every migrate so the Property Setters and the print
 	# format are re-applied from code — a patch only ever runs once, and the
 	# Print Format record in the database is what actually renders, so without
-	# this a change to templates/sales_invoice_case_weight.html would never
+	# this a change to templates/sales_document.html would never
 	# reach a deployed site.
 	"ls_foods.setup.case_pricing_setup.run",
 ]
@@ -248,6 +272,17 @@ doctype_js = {
 	"Customer": "public/js/customer.js",
 	"Sales Invoice": ["public/js/per_lb_pricing.js", "public/js/sales_invoice.js"],
 	"Sales Order": ["public/js/per_lb_pricing.js", "public/js/sales_order.js"],
+	**{
+		dt: "public/js/supplier_part.js"
+		for dt in (
+			"Material Request",
+			"Request for Quotation",
+			"Supplier Quotation",
+			"Purchase Order",
+			"Purchase Receipt",
+			"Purchase Invoice",
+		)
+	},
 }
 doctype_list_js = {
 	"Expense Claim": "public/js/expense_claim_list.js",
@@ -396,6 +431,15 @@ override_doctype_class = {
 # Overriding Methods
 # ------------------------------
 #
+# Create > Sales Invoice on a Sales Order: the order's Pick-Up Location, Order
+#   Source, Project, Cost Center, Price List, Currency and Source Warehouse come
+#   along. See ls_foods/order_to_invoice.py.
+override_whitelisted_methods = {
+	"erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice": (
+		"ls_foods.order_to_invoice.make_sales_invoice"
+	),
+}
+
 # override_whitelisted_methods = {
 # 	"frappe.desk.doctype.event.event.get_events": "ls_foods.event.get_events"
 # }

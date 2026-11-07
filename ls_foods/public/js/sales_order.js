@@ -190,3 +190,110 @@ function ls_foods_weight_dialog(frm) {
 		},
 	});
 }
+
+// Retrieve Payments: an amended order starts with no payments, and Payment
+// Reconciliation only offers invoices (see ls_foods/retrieve_payments.py).
+frappe.ui.form.on("Sales Order", {
+	refresh(frm) {
+		if (frm.doc.docstatus !== 1 || frm.doc.status === "Closed") return;
+		if (!frappe.model.can_write("Payment Entry")) return;
+		frm.add_custom_button(__("Retrieve Payments"), () => ls_foods_retrieve_payments(frm));
+	},
+});
+
+function ls_foods_retrieve_payments(frm) {
+	const method = "ls_foods.retrieve_payments.";
+	frappe.xcall(method + "get_available_payments", { sales_order: frm.doc.name }).then((r) => {
+		if (!r.payments.length) {
+			frappe.msgprint(__("{0} has no unallocated payments.", [frm.doc.customer_name]));
+			return;
+		}
+		let left = r.balance;
+		const rows = r.payments.map((p) => {
+			const amount = Math.min(p.unallocated_amount, left);
+			left = flt(left - amount, 2);
+			return {
+				payment_entry: p.name,
+				posting_date: p.posting_date,
+				reference_no: p.reference_no,
+				unallocated_amount: p.unallocated_amount,
+				amount: amount,
+			};
+		});
+		const dialog = new frappe.ui.Dialog({
+			title: __("Retrieve Payments"),
+			size: "large",
+			fields: [
+				{
+					fieldtype: "HTML",
+					options: `<p>${__("Left to pay on this order: {0}", [format_currency(r.balance)])}</p>`,
+				},
+				{
+					fieldname: "payments",
+					fieldtype: "Table",
+					cannot_add_rows: true,
+					cannot_delete_rows: true,
+					in_place_edit: true,
+					data: rows,
+					fields: [
+						{
+							fieldname: "payment_entry",
+							fieldtype: "Link",
+							options: "Payment Entry",
+							label: __("Payment"),
+							read_only: 1,
+							in_list_view: 1,
+							columns: 3,
+						},
+						{
+							fieldname: "posting_date",
+							fieldtype: "Date",
+							label: __("Date"),
+							read_only: 1,
+							in_list_view: 1,
+							columns: 2,
+						},
+						{
+							fieldname: "reference_no",
+							fieldtype: "Data",
+							label: __("Check #"),
+							read_only: 1,
+							in_list_view: 1,
+							columns: 1,
+						},
+						{
+							fieldname: "unallocated_amount",
+							fieldtype: "Currency",
+							label: __("Unallocated"),
+							read_only: 1,
+							in_list_view: 1,
+							columns: 2,
+						},
+						{
+							fieldname: "amount",
+							fieldtype: "Currency",
+							label: __("Link to Order"),
+							in_list_view: 1,
+							columns: 2,
+						},
+					],
+				},
+			],
+			primary_action_label: __("Link Payments"),
+			primary_action(values) {
+				const allocations = (values.payments || []).map((row) => ({
+					payment_entry: row.payment_entry,
+					amount: row.amount,
+				}));
+				frappe
+					.xcall(method + "link_payments", { sales_order: frm.doc.name, allocations })
+					.then(() => {
+						dialog.hide();
+						frappe.show_alert({ message: __("Payments linked"), indicator: "green" });
+						frm.reload_doc();
+					});
+			},
+		});
+		dialog.show();
+	});
+}

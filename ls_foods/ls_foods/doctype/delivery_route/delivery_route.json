@@ -31,11 +31,12 @@
   },
   {
    "fieldname": "vehicle",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "label": "Vehicle",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "description": "One route per date and vehicle. Pasting a new list here replaces the old one."
+   "description": "Pick from the Vehicle list. One route per date and vehicle. Pasting a new list here replaces the old one.",
+   "options": "Vehicle"
   },
   {
    "fieldname": "column_break_head",
@@ -102,7 +103,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-31 10:00:00.000000",
+ "modified": "2026-11-07 18:24:55.446392",
  "modified_by": "Administrator",
  "module": "Ls Foods",
  "name": "Delivery Route",
