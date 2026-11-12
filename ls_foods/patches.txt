@@ -19,3 +19,5 @@ ls_foods.patches.v0_1_3.order_source
 ls_foods.patches.v0_1_4.buying_supplier_part_no
 ls_foods.patches.v0_1_5.editable_order_address
 ls_foods.patches.v0_1_6.delivery_route_vehicle_link
+ls_foods.patches.v0_1_7.supplier_part_no_dropdown
+ls_foods.patches.v0_1_8.task_issue_fields

@@ -28,7 +28,7 @@ from frappe.custom.doctype.property_setter.property_setter import make_property_
 PART_FIELD = {
 	"fieldname": "supplier_part_no",
 	"label": "Supplier Part Number",
-	"fieldtype": "Data",
+	"fieldtype": "Autocomplete",  # dropdown of the Item Suppliers part numbers, see supplier_part.part_no_query
 	"insert_after": "item_code",
 	"read_only": 0,
 	"in_list_view": 1,
@@ -61,6 +61,14 @@ GRID = [
 
 
 def run():
+	# Frappe refuses Data -> Autocomplete on a Custom Field (not in its allowed
+	# type-change groups) though both are plain varchar, so flip existing ones
+	# directly; create_custom_fields below then sees nothing to change.
+	for dt in CUSTOM_FIELD_DOCTYPES:
+		name = f"{dt}-{PART_FIELD['fieldname']}"
+		if frappe.db.exists("Custom Field", name):
+			frappe.db.set_value("Custom Field", name, "fieldtype", PART_FIELD["fieldtype"], update_modified=False)
+
 	create_custom_fields({dt: [dict(PART_FIELD)] for dt in CUSTOM_FIELD_DOCTYPES}, update=True)
 
 	for dt in STANDARD_FIELD_DOCTYPES:
@@ -69,6 +77,7 @@ def run():
 			("read_only", 0, "Check"),
 			("in_list_view", 1, "Check"),
 			("columns", 2, "Int"),
+			("fieldtype", "Autocomplete", "Select"),
 		):
 			make_property_setter(dt, "supplier_part_no", prop, value, ptype, validate_fields_for_doctype=False)
 

@@ -110,6 +110,37 @@ def item_query(doctype, txt, searchfield, start, page_len, filters, as_dict=Fals
 
 
 @frappe.whitelist()
+def part_no_query(txt="", supplier=None, item_code=None):
+	"""Part numbers for the Supplier Part Number dropdown (numbers only).
+
+	Narrowed by the row's Item Code and the document's Supplier when set; starts-with
+	matches come first, then alphabetical.
+	"""
+	frappe.has_permission("Item", "read", throw=True)
+	txt = (txt or "").strip()
+	filters = {"supplier_part_no": ["is", "set"]}
+	if txt:
+		filters["supplier_part_no"] = ["like", f"%{txt}%"]
+	if supplier:
+		filters["supplier"] = supplier
+	if item_code:
+		filters["parent"] = item_code
+	rows = _item_suppliers(filters, fields=("parent", "supplier_part_no"))
+	if not rows:
+		return []
+	live = set(
+		frappe.get_all(
+			"Item",
+			filters={"name": ["in", list({r.parent for r in rows})], "disabled": 0, "has_variants": 0},
+			pluck="name",
+		)
+	)
+	needle = txt.casefold()
+	numbers = {r.supplier_part_no.strip() for r in rows if r.parent in live and r.supplier_part_no.strip()}
+	return sorted(numbers, key=lambda n: (not n.casefold().startswith(needle), n.casefold()))[:100]
+
+
+@frappe.whitelist()
 def find_items_by_part_no(part_no, supplier=None):
 	"""Items whose Suppliers table has this part number (this supplier's only, if given)."""
 	frappe.has_permission("Item", "read", throw=True)

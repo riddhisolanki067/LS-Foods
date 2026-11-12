@@ -39,6 +39,25 @@ if (!window.ls_foods_supplier_part_loaded) {
 		field.get_query = wrapped;
 	};
 
+	// The Supplier Part Number column is a dropdown (Autocomplete) fed by the Item
+	// Suppliers table: only that item's numbers once an Item Code is picked, only
+	// the document supplier's numbers on documents that have one.
+	const use_part_no_dropdown = (frm) => {
+		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+		const field = grid && grid.get_field("supplier_part_no");
+		if (!field || field.get_query) return;
+		field.get_query = (doc, cdt, cdn) => {
+			const row = locals[cdt] && locals[cdt][cdn];
+			return {
+				query: "ls_foods.supplier_part.part_no_query",
+				params: {
+					supplier: frm.doc.supplier || null,
+					item_code: (row && row.item_code) || null,
+				},
+			};
+		};
+	};
+
 	const fill_item_from_part_no = (frm, cdt, cdn) => {
 		const row = locals[cdt][cdn];
 		const part_no = (row.supplier_part_no || "").trim();
@@ -51,6 +70,8 @@ if (!window.ls_foods_supplier_part_loaded) {
 				// already the right item (e.g. ERPNext just filled the number in)
 				if (items.some((i) => i.item_code === row.item_code)) return;
 				if (!items.length) {
+					// pick-from-list only: drop a typed number that matches nothing
+					frappe.model.set_value(cdt, cdn, "supplier_part_no", "");
 					frappe.show_alert({
 						message: supplier
 							? __("No item has Supplier Part Number {0} for {1}", [part_no, supplier])
@@ -98,7 +119,12 @@ if (!window.ls_foods_supplier_part_loaded) {
 	};
 
 	for (const [doctype, child] of Object.entries(BUYING)) {
-		frappe.ui.form.on(doctype, { refresh: use_part_no_search });
+		frappe.ui.form.on(doctype, {
+			refresh(frm) {
+				use_part_no_search(frm);
+				use_part_no_dropdown(frm);
+			},
+		});
 		frappe.ui.form.on(child, { supplier_part_no: fill_item_from_part_no });
 	}
 }

@@ -185,6 +185,16 @@ doc_events = {
 	"ToDo": {
 		"on_update": "ls_foods.task_access.share_with_assignee",
 	},
+	# Task: "Allocated To" assigns it; "Is Recurring" stays in step with Auto Repeat.
+	"Task": {
+		"validate": "ls_foods.task_access.check_recurring",
+		"on_update": "ls_foods.task_access.assign_allocated_to",
+	},
+	"Auto Repeat": {
+		"after_insert": "ls_foods.task_access.repeat_changed",
+		"on_update": "ls_foods.task_access.repeat_changed",
+		"on_trash": "ls_foods.task_access.repeat_changed",
+	},
 	# Sales Order: items with a Per Pound price are priced $/lb x case weight
 	#   (estimated weight until invoiced). A beef/hog share stays at its price-list
 	#   price — the FIXED deposit — and Deposit Due totals those lines.
@@ -218,6 +228,8 @@ after_install = [
 	"ls_foods.setup.reimbursement_setup.run",
 	"ls_foods.setup.customer_setup.install",
 	"ls_foods.setup.case_pricing_setup.run",
+	# Task / Issue screen fields: idempotent, and a fresh install skips patches.
+	"ls_foods.setup.task_issue_setup.run",
 ]
 
 # Re-applies the Expense Claim field properties that the fixture import would
@@ -270,6 +282,7 @@ doctype_js = {
 	"Salary Slip": "public/js/payment_entry.js",
 	"Expense Claim": "public/js/expense_claim.js",
 	"Customer": "public/js/customer.js",
+	"Task": "public/js/task.js",
 	"Sales Invoice": ["public/js/per_lb_pricing.js", "public/js/sales_invoice.js"],
 	"Sales Order": ["public/js/per_lb_pricing.js", "public/js/sales_order.js"],
 	**{
